@@ -38,6 +38,20 @@ updates:
     open-pull-requests-limit: 10
     commit-message:
       prefix: "chore(deps)"
+    # The floors (AGENTS.md rule #10). These requirements are minimums
+    # every consumer inherits, set to the lowest version either product
+    # uses, so a routine bump here would upgrade an SDK underneath
+    # mast's or core-agent's own tests. Version updates for them are
+    # ignored; security updates still arrive, because `ignore` does not
+    # apply to those. A floor moves deliberately, with the reason on the
+    # docs site's modules page — the first Dependabot run (#4) proposed
+    # genai 1.57 -> 1.72 and both ADK majors, which is why this is here.
+    ignore:
+      - dependency-name: google.golang.org/genai
+      - dependency-name: google.golang.org/adk
+      - dependency-name: google.golang.org/adk/v2
+      - dependency-name: github.com/anthropics/anthropic-sdk-go
+      - dependency-name: github.com/openai/openai-go/v3
     groups:
       go-minor-patch:
         applies-to: version-updates
