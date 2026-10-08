@@ -4,6 +4,18 @@
 
 ### Added
 
+- **`auth`:** resolves a profile's credential when the profile is opened:
+  an API key or bearer token from a named variable, Google ADC, or none.
+  `BearerTransport` fetches a fresh token per request. Secrets never appear
+  in errors or `String()`.
+- **`profile`:** the profile schema with `Validate`, which reports every
+  problem at once, and `Resolve`, which fills `${VAR}` and `{param}`
+  placeholders and finds credentials before any request.
+  - `extends` starts a profile from a built-in.
+  - `Find` looks up declared profiles before the built-ins.
+  - `DecodeJSON` rejects unknown keys.
+  - Built-ins: `vertex-maas`, `ollama`, and the `vllm`, `sglang` and
+    `openai-compatible` templates.
 - **`callctx`:** the per-call context markers adapters and products share:
   side call, no built-ins, no prompt cache, and the prior-success record.
   They come from core-agent's `pkg/models`, so its helpers can become

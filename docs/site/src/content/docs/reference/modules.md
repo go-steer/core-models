@@ -7,7 +7,7 @@ description: The Go modules core-models publishes, their import paths, how they 
 
 | Module | Import |
 |---|---|
-| Core | `github.com/go-steer/core-models` (packages `llm`, `usage`, `callctx`, `retry`) |
+| Core | `github.com/go-steer/core-models` (packages `llm`, `usage`, `callctx`, `retry`, `auth`, `profile`) |
 | ADK v1 adapter | `github.com/go-steer/core-models/adkv1` |
 | ADK v2 adapter | `github.com/go-steer/core-models/adkv2` |
 
@@ -28,6 +28,9 @@ A library's requirements become the minimum versions its consumers get.
 The core module therefore requires the **lowest** genai version either
 product uses, so importing core-models never upgrades a product's genai
 underneath its own tests.
+
+Google credentials come from `cloud.google.com/go/auth`, at the version
+genai already requires, so the core adds no module for them.
 
 Exceptions are made for security fixes. The core requires gRPC 1.83.1
 for GO-2026-6348, a version both products already use.

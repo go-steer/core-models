@@ -28,15 +28,14 @@ OpenAI, the Vertex AI partner models, and self-hosted vLLM, SGLang and Ollama.
 [`docs/design.md`](./docs/design.md) is the design and records the settled
 decisions (§2). Read it before proposing a change of shape.
 
-**Status:** pre-release, phase L0. What exists:
+**Status:** pre-release. L0 is complete:
 
-- the `llm` contract;
-- the `usage` record;
+- the `llm` contract and the `usage` record;
+- `callctx`, `retry`, `auth` and `profile`;
 - the `adkv1` and `adkv2` adapter modules;
-- CI;
-- the docs site.
+- CI and the docs site.
 
-No provider adapters yet. [`docs/design.md`](./docs/design.md) §11 lists the
+L1, the `openai-chat` dialect, is next. No provider adapters exist yet. [`docs/design.md`](./docs/design.md) §11 lists the
 phases.
 
 ## Reading order
@@ -188,6 +187,8 @@ llm/                 the contract: LLM, Request, Response (mirrors ADK's model t
 usage/               usage.Detail, the normalized usage record
 callctx/             per-call context markers shared with the products
 retry/               HTTP-layer retry: Policy.Transport, Record
+auth/                credential resolution: api_key, bearer, google_adc, none
+profile/             provider profiles: schema, built-ins, extends, Resolve
 adkv1/  (module)     adapter to google.golang.org/adk v1  — core-agent
 adkv2/  (module)     adapter to google.golang.org/adk/v2  — mast
 docs/design.md       the design; decisions in §2
@@ -199,7 +200,7 @@ scripts/             verify-internal-links.py (docs site)
 .github/workflows/   thin delegators to dev/ci/presubmits/
 ```
 
-Future packages (`profile/`, `auth/`, `dialect/*`,
+Future packages (`dialect/*`,
 `kvmetrics/`, `pricing/`, `toolwire/`, `conformance/`) are laid out in
 [`docs/design.md`](./docs/design.md) §3. Create them in the phase that fills
 them, not before.

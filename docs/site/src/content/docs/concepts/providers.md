@@ -38,7 +38,8 @@ declares:
 - what the server can do: structured output, reasoning, server-side tools.
 
 A profile that can't be resolved fails when it is loaded, naming the
-profile, rather than at the first request.
+profile, rather than at the first request. Every field and the built-in
+profiles are on the [profiles reference](/reference/profiles/).
 
 ## Self-hosted models
 
