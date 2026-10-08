@@ -24,7 +24,7 @@ sees only what this layer gave up on.
 
 | | |
 |---|---|
-| **Retried** | Status 408, 429, 500, 502, 503 or 504; a connection that failed before a response arrived; any status the server marks `x-should-retry: true` |
+| **Retried** | Status 408, 429, 500, 502, 503 or 504; any failure before a response arrived (refused or dropped connection, timeout, DNS) except a certificate error; any status the server marks `x-should-retry: true` |
 | **Not retried** | Any status marked `x-should-retry: false`; other 4xx; a canceled context; a request body that can't be sent again; a stream that breaks after it started, since replaying it would deliver tokens twice |
 | **Wait** | `retry-after-ms` if present, otherwise `retry-after` as seconds or an HTTP date, otherwise exponential backoff with jitter |
 | **Too long** | If the server asks for more than `MaxHeaderDelay` (default one minute), the response is handed back without waiting. Retrying sooner than asked just earns another 429 |

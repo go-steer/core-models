@@ -32,5 +32,14 @@ underneath its own tests.
 Google credentials come from `cloud.google.com/go/auth`, at the version
 genai already requires, so the core adds no module for them.
 
-Exceptions are made for security fixes. The core requires gRPC 1.83.1
-for GO-2026-6348, a version both products already use.
+Exceptions are made for security fixes:
+
+| Floor | Why |
+|---|---|
+| `google.golang.org/grpc` v1.83.1 | GO-2026-6348. Both products were already at or above it |
+| `golang.org/x/net` v0.60.0 | GO-2026-6611, -6612 and -6617 (HTTP/2). This raises both products' floor, to the fixed version |
+
+Each `go.mod` also carries `toolchain go1.26.9` for the standard library's
+fixes to the same HTTP/2 issues. A `toolchain` line governs only this
+repository's own builds and CI; it is not imposed on consumers. They need
+Go 1.26.9 or later in their own builds to be clear of those issues.

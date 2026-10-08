@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Security
+
+- **`golang.org/x/net` v0.60.0** for GO-2026-6611, -6612 and -6617, and
+  **`toolchain go1.26.9`** for the matching standard-library fixes.
+  Importers need Go 1.26.9 or later in their own builds to be clear of the
+  standard-library half.
+
 ### Added
 
 - **`auth`:** resolves a profile's credential when the profile is opened:
@@ -21,7 +28,8 @@
   They come from core-agent's `pkg/models`, so its helpers can become
   aliases.
 - **`retry`:** `Policy.Transport`, an `http.RoundTripper` that retries 408,
-  429, 5xx gateway errors and dropped connections.
+  429 and 5xx gateway errors, and any transport failure except a canceled
+  context or a certificate error.
   - It honors `retry-after-ms`, `retry-after` (seconds or HTTP date) and
     `x-should-retry`.
   - It hands back, without waiting, a response whose server asks for longer

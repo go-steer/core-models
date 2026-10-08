@@ -35,7 +35,9 @@
 // # What is retried
 //
 // A response whose status is 408, 429, 500, 502, 503 or 504, and a
-// request that failed at the connection level, unless the server sent
+// request that failed before any response arrived (a refused or dropped
+// connection, a timeout, a DNS failure — anything but a certificate
+// error), unless the server sent
 // x-should-retry: false (OpenAI and Anthropic send it). x-should-retry:
 // true makes any status retryable. A canceled context is never
 // retried.
@@ -61,10 +63,11 @@ package retry
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"io"
 	"math/rand/v2"
-	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -258,11 +261,17 @@ func retryable(ctx context.Context, resp *http.Response, err error) bool {
 		return false
 	}
 	if err != nil {
+		// Every RoundTrip error is a transport failure — no response
+		// arrived — and is worth another attempt, as openai-go and
+		// anthropic-sdk-go also judge. That includes errors net/http does
+		// not export, such as "server closed idle connection" when a
+		// reused keep-alive connection was dropped. Two kinds are not:
+		// a canceled context, and a certificate the server will present
+		// again, unchanged, on the next attempt.
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return false
 		}
-		var netErr net.Error
-		return errors.As(err, &netErr) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF)
+		return !certificateError(err)
 	}
 	switch strings.ToLower(resp.Header.Get("x-should-retry")) {
 	case "true":
@@ -377,6 +386,14 @@ func discard(resp *http.Response) {
 	}
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
 	_ = resp.Body.Close()
+}
+
+func certificateError(err error) bool {
+	var verify *tls.CertificateVerificationError
+	var unknown x509.UnknownAuthorityError
+	var hostname x509.HostnameError
+	var invalid x509.CertificateInvalidError
+	return errors.As(err, &verify) || errors.As(err, &unknown) || errors.As(err, &hostname) || errors.As(err, &invalid)
 }
 
 func statusOf(resp *http.Response) int {
