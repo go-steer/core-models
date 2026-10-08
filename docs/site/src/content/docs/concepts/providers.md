@@ -2,7 +2,7 @@
 title: Providers
 description: Which providers core-models will support, in what order, and what has to be true before any of them is called supported.
 sidebar:
-  order: 3
+  order: 4
 ---
 
 core-models has **no provider adapters yet**. This page is the plan. Gemini

@@ -186,6 +186,8 @@ let the product decide.
 ```
 llm/                 the contract: LLM, Request, Response (mirrors ADK's model types)
 usage/               usage.Detail, the normalized usage record
+callctx/             per-call context markers shared with the products
+retry/               HTTP-layer retry: Policy.Transport, Record
 adkv1/  (module)     adapter to google.golang.org/adk v1  — core-agent
 adkv2/  (module)     adapter to google.golang.org/adk/v2  — mast
 docs/design.md       the design; decisions in §2
@@ -197,7 +199,7 @@ scripts/             verify-internal-links.py (docs site)
 .github/workflows/   thin delegators to dev/ci/presubmits/
 ```
 
-Future packages (`profile/`, `auth/`, `callctx/`, `retry/`, `dialect/*`,
+Future packages (`profile/`, `auth/`, `dialect/*`,
 `kvmetrics/`, `pricing/`, `toolwire/`, `conformance/`) are laid out in
 [`docs/design.md`](./docs/design.md) §3. Create them in the phase that fills
 them, not before.
