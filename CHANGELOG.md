@@ -2,14 +2,34 @@
 
 ## Unreleased
 
+### Security
+
+- **`golang.org/x/net` v0.60.0** for GO-2026-6611, -6612 and -6617, and
+  **`toolchain go1.26.9`** for the matching standard-library fixes.
+  Importers need Go 1.26.9 or later in their own builds to be clear of the
+  standard-library half.
+
 ### Added
 
+- **`auth`:** resolves a profile's credential when the profile is opened:
+  an API key or bearer token from a named variable, Google ADC, or none.
+  `BearerTransport` fetches a fresh token per request. Secrets never appear
+  in errors or `String()`.
+- **`profile`:** the profile schema with `Validate`, which reports every
+  problem at once, and `Resolve`, which fills `${VAR}` and `{param}`
+  placeholders and finds credentials before any request.
+  - `extends` starts a profile from a built-in.
+  - `Find` looks up declared profiles before the built-ins.
+  - `DecodeJSON` rejects unknown keys.
+  - Built-ins: `vertex-maas`, `ollama`, and the `vllm`, `sglang` and
+    `openai-compatible` templates.
 - **`callctx`:** the per-call context markers adapters and products share:
   side call, no built-ins, no prompt cache, and the prior-success record.
   They come from core-agent's `pkg/models`, so its helpers can become
   aliases.
 - **`retry`:** `Policy.Transport`, an `http.RoundTripper` that retries 408,
-  429, 5xx gateway errors and dropped connections.
+  429 and 5xx gateway errors, and any transport failure except a canceled
+  context or a certificate error.
   - It honors `retry-after-ms`, `retry-after` (seconds or HTTP date) and
     `x-should-retry`.
   - It hands back, without waiting, a response whose server asks for longer

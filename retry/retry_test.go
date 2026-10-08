@@ -17,6 +17,9 @@ package retry_test
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -362,5 +365,43 @@ func TestSnapshotOfNoRecord(t *testing.T) {
 	var r *retry.Record
 	if r.Snapshot() != (retry.Snapshot{}) {
 		t.Error("a nil Record is not empty")
+	}
+}
+
+// errTransport fails every round trip with err.
+type errTransport struct {
+	err   error
+	calls int
+}
+
+func (e *errTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	e.calls++
+	return nil, e.err
+}
+
+func TestTransportErrorsAreRetriedButCertificatesAreNot(t *testing.T) {
+	for name, tc := range map[string]struct {
+		err       error
+		wantCalls int
+	}{
+		// net/http does not export this one; it must still be retried.
+		"server closed idle connection": {errors.New("http: server closed idle connection"), 3},
+		"unexpected EOF":                {io.ErrUnexpectedEOF, 3},
+		"unknown authority":             {&tls.CertificateVerificationError{Err: x509.UnknownAuthorityError{}}, 1},
+		"hostname mismatch":             {x509.HostnameError{Host: "x"}, 1},
+		"canceled":                      {context.Canceled, 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			base := &errTransport{err: tc.err}
+			var waits []time.Duration
+			req, _ := http.NewRequest(http.MethodGet, "http://example.invalid", nil)
+			_, err := policy(&waits).Transport(base).RoundTrip(req)
+			if !errors.Is(err, tc.err) && err.Error() != tc.err.Error() {
+				t.Errorf("err = %v, want the transport's error back", err)
+			}
+			if base.calls != tc.wantCalls {
+				t.Errorf("%d attempts, want %d", base.calls, tc.wantCalls)
+			}
+		})
 	}
 }

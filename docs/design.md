@@ -216,6 +216,18 @@ models:
 tiers: {mid: Qwen/Qwen3-Coder-Next}
 ```
 
+**As built in L0** (`profile/`), with four refinements to the sketch above:
+
+- `extends: <built-in>` starts a profile from a template.
+- `base_url` takes `{param}` placeholders filled from `params`, whose
+  values may be `${VAR}` or `${VAR:-default}`.
+- Capabilities are tri-state (`*bool`), so an operator can override a
+  template's `true` with `false`.
+- `rates:` waits for the price catalog (L6).
+
+`Open` (profile to `Provider`) lands with the first dialect in L1. Until
+then, `Resolve` is the construction-time check.
+
 **Built-in profiles.** Each is shipped as Go data and pinned by tests.
 
 | Profile | Dialect | Auth | Phase |

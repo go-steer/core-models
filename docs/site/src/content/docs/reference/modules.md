@@ -7,7 +7,7 @@ description: The Go modules core-models publishes, their import paths, how they 
 
 | Module | Import |
 |---|---|
-| Core | `github.com/go-steer/core-models` (packages `llm`, `usage`, `callctx`, `retry`) |
+| Core | `github.com/go-steer/core-models` (packages `llm`, `usage`, `callctx`, `retry`, `auth`, `profile`) |
 | ADK v1 adapter | `github.com/go-steer/core-models/adkv1` |
 | ADK v2 adapter | `github.com/go-steer/core-models/adkv2` |
 
@@ -29,5 +29,17 @@ The core module therefore requires the **lowest** genai version either
 product uses, so importing core-models never upgrades a product's genai
 underneath its own tests.
 
-Exceptions are made for security fixes. The core requires gRPC 1.83.1
-for GO-2026-6348, a version both products already use.
+Google credentials come from `cloud.google.com/go/auth`, at the version
+genai already requires, so the core adds no module for them.
+
+Exceptions are made for security fixes:
+
+| Floor | Why |
+|---|---|
+| `google.golang.org/grpc` v1.83.1 | GO-2026-6348. Both products were already at or above it |
+| `golang.org/x/net` v0.60.0 | GO-2026-6611, -6612 and -6617 (HTTP/2). This raises both products' floor, to the fixed version |
+
+Each `go.mod` also carries `toolchain go1.26.9` for the standard library's
+fixes to the same HTTP/2 issues. A `toolchain` line governs only this
+repository's own builds and CI; it is not imposed on consumers. They need
+Go 1.26.9 or later in their own builds to be clear of those issues.
