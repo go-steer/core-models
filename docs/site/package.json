@@ -1,0 +1,24 @@
+{
+  "name": "core-models-docs",
+  "version": "0.0.1",
+  "description": "core-models documentation site — Astro Starlight.",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "astro dev",
+    "start": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "astro": "astro"
+  },
+  "dependencies": {
+    "@astrojs/markdown-remark": "^7.3.1",
+    "@astrojs/starlight": "^0.42.5",
+    "@fontsource-variable/inter": "^5.1.0",
+    "@fontsource-variable/jetbrains-mono": "^5.1.0",
+    "astro": "^7.3.5",
+    "sharp": "^0.35.5",
+    "unist-util-visit": "^5.1.0"
+  }
+}

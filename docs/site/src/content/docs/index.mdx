@@ -1,0 +1,63 @@
+---
+title: core-models
+description: One provider layer for Go agents built on ADK — Gemini, Claude, OpenAI, Vertex AI partner models and self-hosted model servers behind one contract.
+template: doc
+tableOfContents: false
+banner:
+  content: |
+    Pre-release. The contract and the usage record exist; the first new provider (OpenAI-compatible Chat Completions) is next. See the <a href="/core-models/roadmap/">roadmap</a>.
+hero:
+  title: core-models
+  tagline: One provider layer for Go agents built on ADK — so adding a model is a configuration change, and a fix lands once.
+  actions:
+    - text: Why core-models
+      link: /core-models/why-core-models/
+      icon: right-arrow
+      variant: primary
+    - text: Roadmap
+      link: /core-models/roadmap/
+      icon: right-arrow
+      variant: secondary
+    - text: GitHub
+      link: https://github.com/go-steer/core-models
+      icon: github
+      variant: minimal
+---
+
+import { CardGrid, LinkCard, Card } from '@astrojs/starlight/components';
+
+An agent needs a model to talk to. Which model is often not the agent
+author's choice: a platform team standardizes on one vendor, a regulated
+team keeps data on its own hardware, a cost review moves the cheap work
+to a cheaper model. core-models is the piece that lets a Go agent reach
+any of them the same way.
+
+It is a library of **provider adapters** — the code that turns one
+model request into the right API call for Gemini, Claude, OpenAI, a
+Vertex AI partner model, or a model server you run yourself — plus the
+**usage record** every adapter fills in, so cost and token counts look
+the same whichever model answered.
+
+## Who it is for
+
+<CardGrid>
+  <Card title="You build on mast or core-agent" icon="seti:go">
+    You don't import core-models yourself. Both products will, and the
+    models they can reach grow as it does. Watch the
+    [roadmap](/roadmap/) for when each provider arrives.
+  </Card>
+  <Card title="You embed ADK in your own Go service" icon="puzzle">
+    core-models speaks ADK's model interface on ADK v1 and v2 through
+    two small adapter modules. Once it has providers worth importing,
+    it is meant for you too — but it is pre-release today.
+  </Card>
+</CardGrid>
+
+## Where to go next
+
+<CardGrid>
+  <LinkCard title="Why core-models" href="/core-models/why-core-models/" description="Why a shared library, and why not an existing one." />
+  <LinkCard title="Architecture" href="/core-models/concepts/architecture/" description="The contract, the modules, and what stays in each product." />
+  <LinkCard title="The usage record" href="/core-models/concepts/usage-record/" description="How 'not reported' stays different from zero." />
+  <LinkCard title="Providers" href="/core-models/concepts/providers/" description="What is planned, in what order, and what 'supported' will mean." />
+</CardGrid>

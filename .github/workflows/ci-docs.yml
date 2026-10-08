@@ -1,0 +1,67 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# CI for the docs site (docs/site — Astro + Starlight). Verification
+# only; deploying is docs.yml's job. Same shape as mast's ci-docs.yml.
+#
+# Runs `docs-site.sh check` = astro build + the internal-link verifier
+# (scripts/verify-internal-links.py): a green astro build does NOT
+# validate links, so the verifier catches dead targets and links
+# missing the /core-models deploy base before they 404 on Pages.
+#
+# The site build is deliberately NOT a Go presubmit: Go contributors
+# shouldn't need a Node toolchain.
+
+name: ci-docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/site/**'
+      - 'dev/tools/docs-site.sh'
+      - 'scripts/verify-internal-links.py'
+      - '.github/workflows/ci-docs.yml'
+  pull_request:
+    paths:
+      - 'docs/site/**'
+      - 'dev/tools/docs-site.sh'
+      - 'scripts/verify-internal-links.py'
+      - '.github/workflows/ci-docs.yml'
+
+concurrency:
+  group: ci-docs-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Astro 7 requires Node >=22.12. Keep in lockstep with NODE_MAJOR in
+  # dev/tools/docs-site.sh.
+  NODE_VERSION: '22'
+
+jobs:
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: docs/site/package-lock.json
+      - name: Build site + verify links
+        run: dev/tools/docs-site.sh check
