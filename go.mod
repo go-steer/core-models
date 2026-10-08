@@ -2,7 +2,7 @@ module github.com/go-steer/core-models
 
 go 1.26.6
 
-require google.golang.org/genai v1.57.0
+require google.golang.org/genai v1.72.0
 
 require (
 	cloud.google.com/go v0.116.0 // indirect

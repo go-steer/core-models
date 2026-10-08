@@ -4,8 +4,8 @@ go 1.26.6
 
 require (
 	github.com/go-steer/core-models v0.0.0
-	google.golang.org/adk v1.7.0
-	google.golang.org/genai v1.57.0
+	google.golang.org/adk v1.8.0
+	google.golang.org/genai v1.72.0
 )
 
 require (
