@@ -7,7 +7,7 @@ description: The Go modules core-models publishes, their import paths, how they 
 
 | Module | Import |
 |---|---|
-| Core | `github.com/go-steer/core-models` (packages `llm`, `usage`) |
+| Core | `github.com/go-steer/core-models` (packages `llm`, `usage`, `callctx`, `retry`) |
 | ADK v1 adapter | `github.com/go-steer/core-models/adkv1` |
 | ADK v2 adapter | `github.com/go-steer/core-models/adkv2` |
 

@@ -4,6 +4,18 @@
 
 ### Added
 
+- **`callctx`:** the per-call context markers adapters and products share:
+  side call, no built-ins, no prompt cache, and the prior-success record.
+  They come from core-agent's `pkg/models`, so its helpers can become
+  aliases.
+- **`retry`:** `Policy.Transport`, an `http.RoundTripper` that retries 408,
+  429, 5xx gateway errors and dropped connections.
+  - It honors `retry-after-ms`, `retry-after` (seconds or HTTP date) and
+    `x-should-retry`.
+  - It hands back, without waiting, a response whose server asks for longer
+    than `MaxHeaderDelay`.
+  - Each call's retries are recorded on a `Record` for the adapter to stamp
+    onto the response.
 - **`llm`:** the provider contract (`LLM`, `Request`, `Response`). It mirrors
   ADK's `model` package field for field and imports no ADK, so one core serves
   both ADK majors.
