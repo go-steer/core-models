@@ -149,6 +149,9 @@ type wireUsage struct {
 	TotalTokens         *int64 `json:"total_tokens"`
 	PromptTokensDetails *struct {
 		CachedTokens *int64 `json:"cached_tokens"`
+		// CreatedCacheTokens is vLLM's count of prompt tokens written to
+		// its prefix cache (with --enable-prompt-tokens-details).
+		CreatedCacheTokens *int64 `json:"created_cache_tokens"`
 	} `json:"prompt_tokens_details"`
 	CompletionTokensDetails *struct {
 		ReasoningTokens *int64 `json:"reasoning_tokens"`

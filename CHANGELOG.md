@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Added
+
+- **vLLM cache writes:** `created_cache_tokens`, the prompt tokens vLLM
+  wrote to its prefix cache (reported with
+  `--enable-prompt-tokens-details`), is recorded as
+  `usage.Detail.CacheWriteTokens`.
+
 ## v0.3.0 (2026-10-09)
 
 Self-hosting: the GKE vLLM fixture and a header timeout for servers that
