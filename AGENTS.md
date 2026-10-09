@@ -36,8 +36,10 @@ decisions (§2). Read it before proposing a change of shape.
 - CI and the docs site.
 
 L1 is under way. The `openai-chat` dialect, `coremodels.Open` and a
-conformance corpus recorded from Ollama and Vertex AI exist; mast adoption
-is next. [`docs/design.md`](./docs/design.md) §11 lists the phases.
+conformance corpus recorded from Ollama and Vertex AI shipped in v0.1.0,
+and mast runs them behind `--provider <profile>` (mast #510). Still owed
+for L1: a judged live run at tool-calling parity with Claude, and a vLLM
+deployment end to end. core-agent adoption is L3'. [`docs/design.md`](./docs/design.md) §11 lists the phases.
 
 ## Reading order
 
