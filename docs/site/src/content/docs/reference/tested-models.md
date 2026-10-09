@@ -102,7 +102,8 @@ behind a different server.
 |---|---|---|---|---|---|---|
 | `openai/gpt-oss-120b`, our vLLM | 31 / 31 | 0.874 | 0.911 | 7.7 | 3.4 | 1 / 241 |
 | `google/gemma-4-26B-A4B-it`, our vLLM, thinking off | 24 / 31 | 0.858 | 0.740 | 3.0 | 2.6 | 0 / 72 |
-| `google/gemma-4-26B-A4B-it`, our vLLM, thinking on | 31 / 31 | 0.933 | 0.685 | 26.5 | 3.6 | 0 / 820 |
+| `google/gemma-4-26B-A4B-it`, our vLLM, thinking on, vLLM example template | 31 / 31 | 0.933 | 0.685 | 26.5 | 3.6 | 0 / 820 |
+| `google/gemma-4-26B-A4B-it`, our vLLM, thinking on, model's own template | 31 / 31 | 0.885 | 0.702 | 11.3 | 3.6 | 0 / 351 |
 | `google/gemma-4-26b-a4b-it-maas`, Vertex AI, thinking on | 31 / 31 | 0.917 | 0.677 | 3.6 | 2.6 | 0 / 112 |
 
 What it shows:
@@ -119,12 +120,14 @@ What it shows:
   the 65k context overflowed, on 7 of 31 incidents. Thinking is a
   per-request switch, set in the profile with `extra_body`:
   `{"chat_template_kwargs": {"enable_thinking": true}}`.
-- **The same weights behaved differently on two servers.** With thinking
-  on, Gemma 4 scored about the same on vLLM and Vertex AI. On vLLM it made
-  851 model calls across the run, against 135 on Vertex, repeating tools far
-  more often. The model and the switch were identical, so the difference is
-  in how each server presents the conversation; our overlay's vLLM chat
-  template is the first suspect. Open, not explained.
+- **The same weights behaved differently on two servers, and the chat
+  template explains much of it.** With thinking on, Gemma 4 scored
+  about the same on vLLM and Vertex AI, but on vLLM it repeated tools far
+  more. vLLM's bundled example template predates Google's fix for
+  tool-calling loops. Switching to the model's own template (now the
+  fixture's default) cut model calls from 851 to 382 across the run.
+  Vertex AI still made only 135. The rest of the gap is open; sampling
+  defaults are the next suspect.
 
 Read these numbers carefully:
 
