@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Fixed
+
+- **The Gemma 4 GKE fixture now uses the model's own chat template.** The
+  example template bundled with vLLM 0.31 predates Google's fixes for
+  tool-calling loops. With the model's template, Gemma 4 made 382 model calls
+  over the parity run instead of 851. *Tested models* has the new row. Vertex
+  AI made 135, so part of the gap remains.
+
 ## v0.5.0 (2026-10-09)
 
 ### Documentation
