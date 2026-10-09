@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## v0.3.0 (2026-10-09)
+
+Self-hosting: the GKE vLLM fixture and a header timeout for servers that
+never answer.
+
 ### Added
 
 - **`deploy/gke-vllm`:** a fixture for vLLM on one GPU in GKE, published
