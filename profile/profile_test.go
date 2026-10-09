@@ -366,3 +366,29 @@ func TestExtraBody(t *testing.T) {
 		t.Errorf("Validate = %v, want both reserved keys named", err)
 	}
 }
+
+func TestDeclaredRates(t *testing.T) {
+	p := profile.Profile{Name: "lab", Extends: "vllm", BaseURL: "http://x/v1",
+		Models: []profile.Model{{ID: "qwen", Rates: &profile.Rates{InputPerMTok: 0.2, OutputPerMTok: 0.8}}, {ID: "free"}}}
+	e, _ := profile.Expand(p)
+	if err := e.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if r, ok := e.RatesFor("qwen"); !ok || r.OutputPerMTok != 0.8 {
+		t.Errorf("RatesFor(qwen) = %+v, %v", r, ok)
+	}
+	if _, ok := e.RatesFor("free"); ok {
+		t.Error("a model with no rates reported rates")
+	}
+	for name, r := range map[string]profile.Rates{
+		"all zero":    {},
+		"negative":    {InputPerMTok: -1, OutputPerMTok: 1},
+		"only cached": {CachedInputPerMTok: 0.1},
+	} {
+		bad := profile.Profile{Name: "lab", Extends: "vllm", BaseURL: "http://x/v1", Models: []profile.Model{{ID: "m", Rates: &r}}}
+		e, _ := profile.Expand(bad)
+		if err := e.Validate(); err == nil {
+			t.Errorf("%s: Validate passed", name)
+		}
+	}
+}

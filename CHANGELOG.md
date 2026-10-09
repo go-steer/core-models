@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.5.0 (2026-10-09)
+
 ### Documentation
 
 - ***Tested models* now shows three-run spreads.** GLM 5.2 holds parity with
@@ -18,6 +20,12 @@
 
 ### Added
 
+- **Declared rates:** `models[].rates` in profiles, in USD per million
+  tokens (input, output, cached input, cache write), read with
+  `Profile.RatesFor(id)`. They're for a self-hosted server no published
+  catalog prices.
+  - Validation refuses negative rates, and refuses rates with no input or
+    output price, since a free model makes a cost ceiling that never trips.
 - **Conformance corpus:** Gemma 4 on vLLM and on Vertex AI, nine servers in
   all. A corpus `meta.json` may carry the `extra_body` its recording was
   made with.
@@ -33,8 +41,6 @@
   and again at request time. The example profile in `deploy/gke-vllm`
   enables Gemma 4's thinking, without which it looped on identical tool
   calls (go-steer/mast#514).
-
-### Added
 
 - **vLLM cache writes:** `created_cache_tokens`, the prompt tokens vLLM
   wrote to its prefix cache (reported with

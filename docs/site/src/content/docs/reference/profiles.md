@@ -45,6 +45,7 @@ A self-hosted vLLM server, starting from the built-in `vllm` template:
 | `metrics_url` | The server's Prometheus endpoint, for the optional KV-cache sampler |
 | `extra_body` | Vendor fields added to every request, for switches the dialect doesn't model. For example, `{"chat_template_kwargs": {"enable_thinking": true}}` turns on Gemma 4's thinking on vLLM. Can't set a field the adapter sets itself (`model`, `messages`, `tools`, `temperature`, …) |
 | `models` | `id`, plus an optional `tier` (`small`, `mid` or `frontier`), `context_window`, and `capabilities` and `extra_body` that override the profile's for that model only |
+| `models[].rates` | A declared price, in USD per million tokens: `input_per_mtok`, `output_per_mtok`, `cached_input_per_mtok`, `cache_write_per_mtok`. For a server no published catalog covers, such as your own vLLM. Products price from their catalog first and fall back to these. An input or output price is required, because declaring a model free would make a cost ceiling that never trips |
 | `tiers` | The model for each tier the profile can fill |
 
 Capabilities are per profile and refined per model, because two models

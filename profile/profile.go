@@ -149,6 +149,30 @@ type Model struct {
 	// ExtraBody adds vendor fields to this model's requests, over the
 	// profile's ExtraBody.
 	ExtraBody map[string]any `json:"extra_body,omitempty" yaml:"extra_body,omitempty"`
+	// Rates are the operator's declared price for this model, for a
+	// backend no published catalog covers (a self-hosted server). A
+	// product prices from its catalog first and falls back to these.
+	Rates *Rates `json:"rates,omitempty" yaml:"rates,omitempty"`
+}
+
+// Rates are USD per million tokens. Declare what the model costs you,
+// for example GPU-hours divided by measured throughput. All zero is
+// refused: a free model makes a cost ceiling a ceiling that never trips.
+type Rates struct {
+	InputPerMTok       float64 `json:"input_per_mtok,omitempty" yaml:"input_per_mtok,omitempty"`
+	CachedInputPerMTok float64 `json:"cached_input_per_mtok,omitempty" yaml:"cached_input_per_mtok,omitempty"`
+	CacheWritePerMTok  float64 `json:"cache_write_per_mtok,omitempty" yaml:"cache_write_per_mtok,omitempty"`
+	OutputPerMTok      float64 `json:"output_per_mtok,omitempty" yaml:"output_per_mtok,omitempty"`
+}
+
+// RatesFor returns the declared rates for a listed model.
+func (p Profile) RatesFor(id string) (Rates, bool) {
+	for _, m := range p.Models {
+		if m.ID == id && m.Rates != nil {
+			return *m.Rates, true
+		}
+	}
+	return Rates{}, false
 }
 
 // Capabilities are declared, never probed. Nil means not declared,
@@ -365,6 +389,14 @@ func (p Profile) Validate() error {
 		}
 		if m.ContextWindow < 0 {
 			bad("model %q: context_window is negative", m.ID)
+		}
+		if r := m.Rates; r != nil {
+			switch {
+			case r.InputPerMTok < 0 || r.CachedInputPerMTok < 0 || r.CacheWritePerMTok < 0 || r.OutputPerMTok < 0:
+				bad("model %q: rates cannot be negative", m.ID)
+			case r.InputPerMTok == 0 && r.OutputPerMTok == 0:
+				bad("model %q: rates declare no input or output price; a free model makes a cost ceiling that never trips, so leave rates out instead", m.ID)
+			}
 		}
 	}
 	for tier, id := range p.Tiers {
