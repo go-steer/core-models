@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Added
+
+- **`deploy/gke-vllm`:** a fixture for vLLM on one GPU in GKE, published
+  over Private Service Connect.
+  - Model overlays for gpt-oss-120b, Qwen3-Coder-30B and Gemma 4 26B-A4B.
+  - `psc.sh` sets up the producer subnet, the ServiceAttachment and the
+    consumer endpoint.
+  - A matching profile example.
+  - It encodes the lessons from bringing it up: egress, PVC sizing,
+    `enableServiceLinks`, the API-key newline, gpt-oss's `auto`-only tool
+    choice, and `--enable-prompt-tokens-details`.
+  - Documented on the new *Self-hosting on GKE* page.
+- **Conformance corpus:** a recording from that deployment
+  (`vllm-0.31-gpt-oss-120b`).
+- **Live smoke:** `CORE_MODELS_LIVE_PROFILE_FILE` declares profiles for a
+  server with its own URL and credential.
+
 ### Documentation
 
 - **New *Tested models* page.** It explains what the conformance and
