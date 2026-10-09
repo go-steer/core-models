@@ -1,0 +1,6 @@
+{
+  "profile": "vllm",
+  "model": "google/gemma-4-26B-A4B-it",
+  "recorded": "2026-10-09",
+  "server": "vLLM v0.31.0 on one RTX PRO 6000 (GKE G4) over PSC, gemma4 tool and reasoning parsers; thinking off. Cached tokens reported"
+}
