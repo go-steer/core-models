@@ -81,6 +81,11 @@ With `kubectl` pointed at the producer cluster:
 - **Cached tokens are reported per request** only with
   `--enable-prompt-tokens-details`, which every overlay sets. Server-wide
   prefix-cache counters are on `/metrics` regardless.
+- **Gemma 4 needs thinking on for agentic work.** With thinking off (the
+  default), it fell into a loop of identical tool calls on 7 of 31
+  incidents (go-steer/mast#514). Thinking is switched per request, so the
+  example profile sends it through `extra_body`
+  (`chat_template_kwargs.enable_thinking`).
 - **On the RTX PRO 6000 (SM120)**, gpt-oss runs MXFP4 through vLLM's
   Marlin kernels, not native FP4. It works, but it isn't the fast path.
 

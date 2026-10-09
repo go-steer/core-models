@@ -160,3 +160,36 @@ func TestOpenAppliesPerModelCapabilities(t *testing.T) {
 		t.Errorf("tool_choice per model = %v, want gpt-oss downgraded to auto and GLM forced", choices)
 	}
 }
+
+func TestOpenAppliesPerModelExtraBody(t *testing.T) {
+	var bodies []map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var b map[string]any
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &b)
+		bodies = append(bodies, b)
+		_, _ = io.WriteString(w, `{"id":"c","model":"m","choices":[{"index":0,"message":{"content":"ok"},"finish_reason":"stop"}]}`)
+	}))
+	defer srv.Close()
+	p, err := coremodels.Open(context.Background(), profile.Profile{
+		Name: "lab", Extends: "vllm", BaseURL: srv.URL + "/v1",
+		Models: []profile.Model{{ID: "gemma", ExtraBody: map[string]any{"chat_template_kwargs": map[string]any{"enable_thinking": true}}}},
+	}, opts(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"gemma", "qwen"} {
+		m, _ := p.Model(context.Background(), id)
+		for _, err := range m.GenerateContent(context.Background(), &llm.Request{Contents: []*genai.Content{genai.NewContentFromText("x", genai.RoleUser)}}, false) {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if _, ok := bodies[0]["chat_template_kwargs"]; !ok {
+		t.Error("gemma's extra_body was not sent")
+	}
+	if _, ok := bodies[1]["chat_template_kwargs"]; ok {
+		t.Error("another model received gemma's extra_body")
+	}
+}

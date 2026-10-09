@@ -332,3 +332,37 @@ func TestCapabilitiesArePerModel(t *testing.T) {
 		t.Errorf("other = %+v: want the profile's", o)
 	}
 }
+
+func TestExtraBody(t *testing.T) {
+	p := profile.Profile{
+		Name: "lab", Extends: "vllm", BaseURL: "http://x/v1",
+		ExtraBody: map[string]any{"top_k": 20, "chat_template_kwargs": map[string]any{"enable_thinking": false}},
+		Models:    []profile.Model{{ID: "gemma", ExtraBody: map[string]any{"chat_template_kwargs": map[string]any{"enable_thinking": true}}}},
+	}
+	e, err := profile.Expand(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	g := e.ExtraBodyFor("gemma")
+	if g["top_k"] != 20 || g["chat_template_kwargs"].(map[string]any)["enable_thinking"] != true {
+		t.Errorf("gemma extra = %v: want the profile's top_k and its own thinking switch", g)
+	}
+	if o := e.ExtraBodyFor("other"); o["chat_template_kwargs"].(map[string]any)["enable_thinking"] != false {
+		t.Errorf("other extra = %v: want the profile's", o)
+	}
+	if (profile.Profile{Name: "x"}).ExtraBodyFor("m") != nil {
+		t.Error("no extras should be nil")
+	}
+
+	bad := profile.Profile{Name: "lab", Extends: "vllm", BaseURL: "http://x/v1",
+		ExtraBody: map[string]any{"temperature": 0.1},
+		Models:    []profile.Model{{ID: "m", ExtraBody: map[string]any{"messages": []any{}}}}}
+	e, _ = profile.Expand(bad)
+	err = e.Validate()
+	if err == nil || !strings.Contains(err.Error(), `profile extra_body sets "temperature"`) || !strings.Contains(err.Error(), `model "m" extra_body sets "messages"`) {
+		t.Errorf("Validate = %v, want both reserved keys named", err)
+	}
+}

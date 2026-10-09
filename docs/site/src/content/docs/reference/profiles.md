@@ -43,7 +43,8 @@ A self-hosted vLLM server, starting from the built-in `vllm` template:
 | `usage.cached_tokens` | `unreliable` records cached tokens as not reported even when the server sends them |
 | `reasoning_format` | `think_tags` for a server that puts reasoning inline as a leading `<think>…</think>` block (Ollama; vLLM or SGLang without a reasoning parser). The block becomes a reasoning part instead of answer text |
 | `metrics_url` | The server's Prometheus endpoint, for the optional KV-cache sampler |
-| `models` | `id`, plus an optional `tier` (`small`, `mid` or `frontier`), `context_window`, and `capabilities` that override the profile's for that model only |
+| `extra_body` | Vendor fields added to every request, for switches the dialect doesn't model. For example, `{"chat_template_kwargs": {"enable_thinking": true}}` turns on Gemma 4's thinking on vLLM. Can't set a field the adapter sets itself (`model`, `messages`, `tools`, `temperature`, …) |
+| `models` | `id`, plus an optional `tier` (`small`, `mid` or `frontier`), `context_window`, and `capabilities` and `extra_body` that override the profile's for that model only |
 | `tiers` | The model for each tier the profile can fill |
 
 Capabilities are per profile and refined per model, because two models

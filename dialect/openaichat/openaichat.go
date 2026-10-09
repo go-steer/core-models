@@ -81,6 +81,9 @@ type Options struct {
 	// NoForcedToolChoice: the model rejects "required" and named tool
 	// choices; send "auto" instead and mark the response.
 	NoForcedToolChoice bool
+	// ExtraBody is merged into every request body: vendor fields the
+	// dialect does not model. It must not repeat a field the adapter sets.
+	ExtraBody map[string]any
 }
 
 // ModelOptions are the per-model refinements of Options: one server
@@ -89,6 +92,8 @@ type ModelOptions struct {
 	ResponseSchema     *bool
 	ReasoningEcho      *bool
 	NoForcedToolChoice *bool
+	// ExtraBody, when non-nil, replaces the Client's.
+	ExtraBody map[string]any
 }
 
 // Client is a connection to one server. Safe for concurrent use.
@@ -145,6 +150,9 @@ func (c *Client) ModelWith(id string, mo ModelOptions) llm.LLM {
 	}
 	if mo.NoForcedToolChoice != nil {
 		o.NoForcedToolChoice = *mo.NoForcedToolChoice
+	}
+	if mo.ExtraBody != nil {
+		o.ExtraBody = mo.ExtraBody
 	}
 	return &model{Client: c, id: id, opts: o}
 }
@@ -233,9 +241,9 @@ func (m *model) GenerateContent(ctx context.Context, req *llm.Request, stream bo
 }
 
 func (m *model) send(ctx context.Context, body *chatRequest) (*http.Response, error) {
-	raw, err := json.Marshal(body)
+	raw, err := m.encode(body)
 	if err != nil {
-		return nil, fmt.Errorf("openai-chat: encode request: %w", err)
+		return nil, err
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, m.endpoint, bytes.NewReader(raw))
 	if err != nil {
@@ -254,6 +262,30 @@ func (m *model) send(ctx context.Context, body *chatRequest) (*http.Response, er
 		return nil, apiError(resp)
 	}
 	return resp, nil
+}
+
+// encode marshals the request, with ExtraBody's fields added. A field
+// the request already carries is an error: ExtraBody adds vendor
+// switches, it never overrides what the adapter decided.
+func (m *model) encode(body *chatRequest) ([]byte, error) {
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("openai-chat: encode request: %w", err)
+	}
+	if len(m.opts.ExtraBody) == 0 {
+		return raw, nil
+	}
+	var merged map[string]any
+	if err := json.Unmarshal(raw, &merged); err != nil {
+		return nil, fmt.Errorf("openai-chat: encode request: %w", err)
+	}
+	for k, v := range m.opts.ExtraBody {
+		if _, set := merged[k]; set {
+			return nil, fmt.Errorf("openai-chat: extra_body sets %q, which this request already sets", k)
+		}
+		merged[k] = v
+	}
+	return json.Marshal(merged)
 }
 
 func apiError(resp *http.Response) error {

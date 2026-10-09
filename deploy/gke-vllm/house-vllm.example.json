@@ -5,7 +5,9 @@
   "auth": {"kind": "bearer", "env": "HOUSE_VLLM_API_KEY"},
   "metrics_url": "http://PSC-ENDPOINT-IP:8000/metrics",
   "models": [
-    {"id": "openai/gpt-oss-120b", "tier": "mid", "capabilities": {"forced_tool_choice": false}}
+    {"id": "openai/gpt-oss-120b", "tier": "mid", "capabilities": {"forced_tool_choice": false}},
+    {"id": "google/gemma-4-26B-A4B-it",
+     "extra_body": {"chat_template_kwargs": {"enable_thinking": true}}}
   ],
   "tiers": {"mid": "openai/gpt-oss-120b"}
 }]
