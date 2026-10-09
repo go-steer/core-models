@@ -1,0 +1,7 @@
+{
+  "profile": "vertex-maas",
+  "model": "google/gemma-4-26b-a4b-it-maas",
+  "extra_body": {"chat_template_kwargs": {"enable_thinking": true}},
+  "recorded": "2026-10-09",
+  "server": "Vertex AI partner models, global only (us-central1 refuses it); thinking on via extra_body, reasoning in reasoning_content"
+}

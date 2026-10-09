@@ -50,6 +50,9 @@ import (
 type corpusMeta struct {
 	Profile string `json:"profile"`
 	Model   string `json:"model"`
+	// ExtraBody is the model's extra_body when the recording was made, so
+	// the replay sends the same request.
+	ExtraBody map[string]any `json:"extra_body,omitempty"`
 }
 
 func TestConformance(t *testing.T) {
@@ -75,6 +78,9 @@ func TestConformance(t *testing.T) {
 					defer srv.Close()
 
 					p := profile.Profile{Name: "replay", Extends: meta.Profile, BaseURL: srv.URL + "/v1"}
+					if meta.ExtraBody != nil {
+						p.Models = []profile.Model{{ID: meta.Model, ExtraBody: meta.ExtraBody}}
+					}
 					prov, err := coremodels.Open(context.Background(), p, coremodels.Options{Resolve: profile.Options{
 						Getenv: func(k string) string { return map[string]string{"GOOGLE_CLOUD_PROJECT": "PROJECT"}[k] },
 						Auth: auth.Options{DetectGoogle: func(context.Context, []string) (auth.TokenSource, error) {

@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Documentation
+
+- ***Tested models* now shows three-run spreads.** GLM 5.2 holds parity with
+  Claude across all three runs. Kimi K2 Thinking is corrected from "at
+  parity" to close, below parity, with a mean intent of 0.941.
+- **Breadth is now two columns:** tool calls and distinct tools per
+  incident. The single published column counted repeats as tools.
+- **New self-hosted section:**
+  - gpt-oss-120b on vLLM.
+  - Gemma 4 on vLLM, with thinking off (it looped on 7 of 31 incidents)
+    and on.
+  - The same Gemma 4 weights on Vertex AI. They scored the same, but vLLM
+    let the model repeat tools far more often, which is still unexplained.
+
+### Added
+
+- **Conformance corpus:** Gemma 4 on vLLM and on Vertex AI, nine servers in
+  all. A corpus `meta.json` may carry the `extra_body` its recording was
+  made with.
+
 ## v0.4.0 (2026-10-09)
 
 ### Added
