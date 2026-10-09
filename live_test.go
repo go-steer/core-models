@@ -22,6 +22,10 @@ package coremodels_test
 //	CORE_MODELS_LIVE_PROFILE=ollama CORE_MODELS_LIVE_MODEL=qwen3:1.7b \
 //	  go test -tags live -run TestLive -v .
 //
+// CORE_MODELS_LIVE_PROFILE_FILE=<file.json> declares profiles (a JSON
+// array, the profile schema) that CORE_MODELS_LIVE_PROFILE can name, for
+// a self-hosted server with its own URL and credential.
+//
 // CORE_MODELS_LIVE_RECORD=<dir> also writes every HTTP exchange, with
 // the Authorization header removed, to <dir>/<scenario>.jsonl — the raw
 // material of the conformance corpus.
@@ -80,7 +84,17 @@ func TestLive(t *testing.T) {
 	if name == "" || modelID == "" {
 		t.Skip("set CORE_MODELS_LIVE_PROFILE and CORE_MODELS_LIVE_MODEL")
 	}
-	p, err := profile.Find(name, nil)
+	var declared []profile.Profile
+	if f := os.Getenv("CORE_MODELS_LIVE_PROFILE_FILE"); f != "" {
+		raw, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if declared, err = profile.DecodeJSON(raw); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p, err := profile.Find(name, declared)
 	if err != nil {
 		t.Fatal(err)
 	}

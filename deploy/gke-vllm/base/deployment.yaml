@@ -1,0 +1,78 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# vLLM's OpenAI-compatible server on one GPU. A model overlay
+# (models/<name>/) supplies the args: model, tool-call parser, limits.
+#
+# The API key comes from Secret vllm-api-key (key: api-key), created out
+# of band so it is never committed:
+#   kubectl -n core-models create secret generic vllm-api-key \
+#     --from-literal=api-key="$(openssl rand -hex 24)"
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm
+  namespace: core-models
+  labels: {app: vllm}
+spec:
+  replicas: 1
+  # One GPU: the old pod must release it before the new one can start.
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: vllm}
+  template:
+    metadata:
+      labels: {app: vllm}
+    spec:
+      nodeSelector:
+        cloud.google.com/gke-accelerator: nvidia-rtx-pro-6000
+      tolerations:
+        - {key: nvidia.com/gpu, operator: Exists, effect: NoSchedule}
+      terminationGracePeriodSeconds: 60
+      # Kubernetes injects VLLM_SERVICE_HOST, VLLM_PORT_8000_TCP, ... for a
+      # Service named vllm, and vLLM reads every VLLM_* variable as its own
+      # configuration. Service links are not needed here; turn them off.
+      enableServiceLinks: false
+      containers:
+        - name: vllm
+          image: vllm/vllm-openai:v0.31.0
+          command: ["vllm", "serve"]
+          args: []   # set by the model overlay
+          env:
+            - name: HF_HOME
+              value: /models/hf
+            - name: VLLM_API_KEY
+              valueFrom:
+                secretKeyRef: {name: vllm-api-key, key: api-key}
+          ports:
+            - {name: http, containerPort: 8000}
+          resources:
+            requests: {cpu: "8", memory: 64Gi, nvidia.com/gpu: 1}
+            limits: {memory: 150Gi, nvidia.com/gpu: 1}
+          # The first start downloads the weights; allow up to 60 minutes.
+          startupProbe:
+            httpGet: {path: /health, port: http}
+            periodSeconds: 10
+            failureThreshold: 360
+          readinessProbe:
+            httpGet: {path: /health, port: http}
+            periodSeconds: 10
+          volumeMounts:
+            - {name: models, mountPath: /models}
+            - {name: dshm, mountPath: /dev/shm}
+      volumes:
+        - name: models
+          persistentVolumeClaim: {claimName: vllm-models}
+        - name: dshm
+          emptyDir: {medium: Memory, sizeLimit: 16Gi}

@@ -115,8 +115,9 @@ the breakdown. It is also served only from `us-east5`.
 | Vertex AI, global | `qwen/qwen3-coder-480b-a35b-instruct-maas` | No reasoning output; cached tokens reported |
 | Vertex AI, global | `zai-org/glm-5.2-maas` | Text and a tool call in the same turn |
 | Vertex AI, `us-east5` | `meta/llama-4-maverick-17b-128e-instruct-maas` | 404 at `global`; needs a regional profile |
+| vLLM 0.31.0 on GKE (RTX PRO 6000), over PSC | `openai/gpt-oss-120b` | Reports reasoning tokens separately. Cached tokens need `--enable-prompt-tokens-details`. Self-hosted with [`deploy/gke-vllm`](/reference/self-hosting-on-gke/) |
 
-All six replay on every pull request.
+All seven replay on every pull request.
 
 ## Reproducing
 

@@ -1,0 +1,36 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# gpt-oss-120b on one 96 GB RTX PRO 6000: ~63 GB of MXFP4 weights.
+# Flags follow vLLM's GPT-OSS recipe. gpt-oss accepts tool_choice "auto"
+# only, which the profile declares (forced_tool_choice: false).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+patches:
+  - target: {kind: Deployment, name: vllm}
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/args
+        value:
+          - openai/gpt-oss-120b
+          - --tool-call-parser=openai
+          - --enable-auto-tool-choice
+          # Report cached prompt tokens per request (usage.prompt_tokens_details).
+          - --enable-prompt-tokens-details
+          - --kv-cache-dtype=fp8
+          - --max-model-len=65536
+          - --max-num-batched-tokens=8192
+          - --gpu-memory-utilization=0.92

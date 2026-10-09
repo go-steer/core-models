@@ -1,0 +1,11 @@
+[{
+  "name": "house-vllm",
+  "extends": "vllm",
+  "base_url": "http://PSC-ENDPOINT-IP:8000/v1",
+  "auth": {"kind": "bearer", "env": "HOUSE_VLLM_API_KEY"},
+  "metrics_url": "http://PSC-ENDPOINT-IP:8000/metrics",
+  "models": [
+    {"id": "openai/gpt-oss-120b", "tier": "mid", "capabilities": {"forced_tool_choice": false}}
+  ],
+  "tiers": {"mid": "openai/gpt-oss-120b"}
+}]

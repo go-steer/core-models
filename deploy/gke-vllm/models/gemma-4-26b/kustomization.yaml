@@ -1,0 +1,38 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Gemma 4 26B-A4B (MoE, 4B active) in BF16, ~52 GB: fits one 96 GB
+# RTX PRO 6000 with room for KV cache. Apache 2.0 and ungated, so no
+# Hugging Face token is needed. Vertex AI also serves it
+# (google/gemma-4-26b-a4b-it-maas), so the same weights can be measured
+# self-hosted and managed. Flags follow vLLM's Gemma 4 recipe; the
+# chat template ships in the vLLM image.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+patches:
+  - target: {kind: Deployment, name: vllm}
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/args
+        value:
+          - google/gemma-4-26B-A4B-it
+          - --tool-call-parser=gemma4
+          - --reasoning-parser=gemma4
+          - --enable-auto-tool-choice
+          - --enable-prompt-tokens-details
+          - --chat-template=/vllm-workspace/examples/tool_chat_template_gemma4.jinja
+          - --max-model-len=65536
+          - --gpu-memory-utilization=0.90
