@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## v0.1.0 (2026-10-09)
+
+First release: the L0 foundation and the first dialect (L1, core-models half).
+Modules: `github.com/go-steer/core-models` v0.1.0,
+`github.com/go-steer/core-models/adkv1` v0.1.0 and
+`github.com/go-steer/core-models/adkv2` v0.1.0. Pre-1.0: a minor version may
+break the API.
+
 ### Security
 
 - **`golang.org/x/net` v0.60.0** for GO-2026-6611, -6612 and -6617, and
