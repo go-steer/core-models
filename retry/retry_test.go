@@ -405,3 +405,96 @@ func TestTransportErrorsAreRetriedButCertificatesAreNot(t *testing.T) {
 		})
 	}
 }
+
+// A server that accepts the request and never sends headers is the
+// failure that froze an eval run for 28 minutes. The attempt is
+// abandoned at HeaderTimeout and retried like a dropped connection.
+func TestAnAttemptThatNeverAnswersIsAbandonedAndRetried(t *testing.T) {
+	var mu sync.Mutex
+	calls := 0
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		calls++
+		n := calls
+		mu.Unlock()
+		if n == 1 {
+			select { // hang until the test ends or the client gives up
+			case <-release:
+			case <-r.Context().Done():
+			}
+			return
+		}
+		_, _ = io.WriteString(w, "ok")
+	}))
+	defer srv.Close()
+	defer close(release) // before srv.Close, which waits for the hung handler
+
+	var waits []time.Duration
+	p := policy(&waits)
+	p.HeaderTimeout = 50 * time.Millisecond
+	ctx, rec := retry.WithRecord(context.Background())
+	start := time.Now()
+	resp, err := post(t, ctx, p.Transport(nil), srv.URL, "{}")
+	if err != nil {
+		t.Fatalf("err = %v, want the retry to succeed", err)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if string(b) != "ok" || calls != 2 || rec.Snapshot().Retries != 1 {
+		t.Errorf("body %q, %d calls, record %+v; want ok after one retry", b, calls, rec.Snapshot())
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Errorf("took %s: the hung attempt was not abandoned at the header timeout", d)
+	}
+}
+
+func TestAServerThatNeverAnswersEndsInErrNoResponse(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	defer srv.Close()
+	defer close(release) // before srv.Close, which waits for the hung handlers
+	var waits []time.Duration
+	p := policy(&waits)
+	p.HeaderTimeout = 30 * time.Millisecond
+	ctx, rec := retry.WithRecord(context.Background())
+	_, err := post(t, ctx, p.Transport(nil), srv.URL, "{}")
+	if !errors.Is(err, retry.ErrNoResponse) {
+		t.Fatalf("err = %v, want ErrNoResponse", err)
+	}
+	if got := rec.Snapshot(); got.Retries != 2 || got.GaveUp != retry.Budget {
+		t.Errorf("record = %+v, want two retries then gave up on budget", got)
+	}
+}
+
+// The deadline is for headers only. A stream that sent its headers and
+// then takes longer than HeaderTimeout to finish is healthy.
+func TestTheHeaderTimeoutNeverCutsABody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(200)
+		w.(http.Flusher).Flush()
+		for i := range 5 {
+			time.Sleep(40 * time.Millisecond)
+			_, _ = io.WriteString(w, string(rune('a'+i)))
+			w.(http.Flusher).Flush()
+		}
+	}))
+	defer srv.Close()
+	var waits []time.Duration
+	p := policy(&waits)
+	p.HeaderTimeout = 50 * time.Millisecond // shorter than the 200ms body
+	resp, err := post(t, context.Background(), p.Transport(nil), srv.URL, "{}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	b, err := io.ReadAll(resp.Body)
+	if err != nil || string(b) != "abcde" {
+		t.Errorf("body = %q, %v; want the whole slow stream", b, err)
+	}
+}

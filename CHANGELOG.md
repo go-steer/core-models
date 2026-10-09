@@ -19,6 +19,15 @@
 - **Live smoke:** `CORE_MODELS_LIVE_PROFILE_FILE` declares profiles for a
   server with its own URL and credential.
 
+### Fixed
+
+- **A server that never answers no longer holds the caller forever.**
+  `retry.Policy.HeaderTimeout` (default five minutes) abandons an attempt
+  with no response headers and retries it like a dropped connection. The
+  final failure is `retry.ErrNoResponse`. The limit never applies to a
+  response body, so a long stream is unaffected. Found when a Vertex AI
+  request waited 28 minutes for headers and froze a judged eval run.
+
 ### Documentation
 
 - **New *Tested models* page.** It explains what the conformance and

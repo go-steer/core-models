@@ -66,12 +66,14 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
+	"fmt"
 	"io"
 	"math/rand/v2"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -90,6 +92,14 @@ type Policy struct {
 	// MaxHeaderDelay is the longest server-requested wait honored. A
 	// longer request ends retrying and returns the response.
 	MaxHeaderDelay time.Duration
+	// HeaderTimeout bounds how long one attempt may wait for response
+	// headers. Expiry abandons the attempt and counts as a transport
+	// failure, so it is retried like a dropped connection. It never
+	// limits the body: a stream that has sent its headers may run as long
+	// as it generates. A non-streaming request receives headers only once
+	// the whole answer exists, so set it above the slowest complete
+	// answer you expect. Zero means no limit.
+	HeaderTimeout time.Duration
 	// Jitter is the fraction (0–1) of a computed backoff that is
 	// randomized, so callers that failed together do not retry
 	// together. Header-requested delays are never jittered.
@@ -114,7 +124,11 @@ func Default() Policy {
 		BackoffFactor:  2,
 		MaxBackoff:     20 * time.Second,
 		MaxHeaderDelay: time.Minute,
-		Jitter:         0.25,
+		// A server that accepts a request and never answers would
+		// otherwise hold the caller forever: observed on a Vertex AI
+		// partner model, one request waiting 28 minutes for headers.
+		HeaderTimeout: 5 * time.Minute,
+		Jitter:        0.25,
 	}
 }
 
@@ -133,6 +147,10 @@ const (
 	// Canceled means the context ended during a wait.
 	Canceled GaveUp = "canceled"
 )
+
+// ErrNoResponse is the error of an attempt that received no response
+// headers within Policy.HeaderTimeout.
+var ErrNoResponse = errors.New("retry: no response headers within the header timeout")
 
 // Record is what Transport did for the requests made under one call's
 // context. An adapter puts one on the context with WithRecord and, when
@@ -225,7 +243,7 @@ func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	rec := recordFrom(ctx)
 	backoff := t.p.InitialBackoff
 	for attempt := 0; ; attempt++ {
-		resp, err := t.base.RoundTrip(req)
+		resp, err := t.attempt(req)
 		if !retryable(ctx, resp, err) {
 			return resp, err
 		}
@@ -259,12 +277,55 @@ func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 }
 
+// attempt sends req once, abandoning it if no response headers arrive
+// within HeaderTimeout. The deadline covers the wait for headers only;
+// once they are in, the body reads under the caller's context alone.
+func (t *transport) attempt(req *http.Request) (*http.Response, error) {
+	if t.p.HeaderTimeout <= 0 {
+		return t.base.RoundTrip(req)
+	}
+	ctx, cancel := context.WithCancel(req.Context())
+	var timedOut atomic.Bool
+	timer := time.AfterFunc(t.p.HeaderTimeout, func() {
+		timedOut.Store(true)
+		cancel()
+	})
+	resp, err := t.base.RoundTrip(req.WithContext(ctx))
+	if !timer.Stop() && timedOut.Load() {
+		cancel()
+		discard(resp)
+		return nil, fmt.Errorf("%w (%s): %w", ErrNoResponse, t.p.HeaderTimeout, err)
+	}
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	// The attempt's context must outlive this call for the body to be
+	// readable, and must end when the body is done with.
+	resp.Body = &cancelOnClose{ReadCloser: resp.Body, cancel: cancel}
+	return resp, nil
+}
+
+type cancelOnClose struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (c *cancelOnClose) Close() error {
+	err := c.ReadCloser.Close()
+	c.cancel()
+	return err
+}
+
 // retryable reports whether a round trip's outcome is worth re-sending.
 func retryable(ctx context.Context, resp *http.Response, err error) bool {
 	if ctx.Err() != nil {
 		return false
 	}
 	if err != nil {
+		if errors.Is(err, ErrNoResponse) {
+			return true
+		}
 		// Every RoundTrip error is a transport failure — no response
 		// arrived — and is worth another attempt, as openai-go and
 		// anthropic-sdk-go also judge. That includes errors net/http does
