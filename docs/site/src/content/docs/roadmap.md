@@ -8,7 +8,7 @@ Each phase names what it delivers and how it is judged done.
 | Phase | Delivers | Status |
 |---|---|---|
 | **L0** | Repository, CI, the `llm` contract, the `usage` record, the `adkv1` and `adkv2` adapter modules | **done** |
-| **L1** | OpenAI Chat Completions, serving the built-in profiles for Vertex AI partner models, vLLM, SGLang, Ollama and any OpenAI-compatible endpoint; mast adopts it | **next** |
+| **L1** | OpenAI Chat Completions, serving the built-in profiles for Vertex AI partner models, vLLM, SGLang, Ollama and any OpenAI-compatible endpoint; mast adopts it | **in progress**: the adapter, `coremodels.Open`, and a corpus recorded from Ollama and Vertex AI are done; mast adoption next |
 | **L2** | OpenAI Responses; OpenAI and xAI profiles | planned |
 | **L3** | KV-cache statistics from self-hosted servers; core-agent adopts L1–L3 | planned |
 | **L4** | Anthropic adapter moves here, with the best of both products' versions | planned |

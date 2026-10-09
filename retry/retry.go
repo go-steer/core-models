@@ -147,6 +147,10 @@ type Record struct {
 	snap Snapshot
 }
 
+// MetadataKey is the llm.Response.CustomMetadata key an adapter stamps
+// a non-empty Snapshot under.
+const MetadataKey = "core_models.retry"
+
 // Snapshot is a Record's contents at one moment, in the shape it is
 // persisted. Zero means no request was retried.
 type Snapshot struct {

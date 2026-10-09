@@ -1,0 +1,6 @@
+{
+  "profile": "vertex-maas",
+  "model": "openai/gpt-oss-20b-maas",
+  "recorded": "2026-10-09",
+  "server": "Vertex AI partner-model endpoint, global location (reasoning in reasoning_content; project id redacted from paths)"
+}

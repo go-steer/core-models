@@ -72,12 +72,17 @@ var builtins = map[string]Profile{
 			ServerTools: no(), Streaming: yes(),
 		},
 	},
+	// Ollama's OpenAI-compatible endpoint puts a reasoning model's
+	// thinking inline as <think>…</think> (observed on 0.9.6 with
+	// qwen3); the splitter only acts on a leading block, so a model that
+	// does not think is unaffected.
 	"ollama": {
-		Name:       "ollama",
-		Dialect:    OpenAIChat,
-		BaseURL:    "http://localhost:11434/v1",
-		Auth:       auth.Config{Kind: auth.None},
-		OpenModels: yes(),
+		Name:            "ollama",
+		Dialect:         OpenAIChat,
+		BaseURL:         "http://localhost:11434/v1",
+		ReasoningFormat: ThinkTags,
+		Auth:            auth.Config{Kind: auth.None},
+		OpenModels:      yes(),
 		Capabilities: Capabilities{
 			ResponseSchema: no(), ReasoningEcho: no(), ParallelToolCalls: no(),
 			ServerTools: no(), Streaming: yes(),
@@ -188,6 +193,9 @@ func Expand(p Profile) (Profile, error) {
 	if p.Usage.CachedTokens != "" {
 		out.Usage.CachedTokens = p.Usage.CachedTokens
 	}
+	if p.ReasoningFormat != "" {
+		out.ReasoningFormat = p.ReasoningFormat
+	}
 	if p.MetricsURL != "" {
 		out.MetricsURL = p.MetricsURL
 	}
@@ -248,7 +256,10 @@ type Options struct {
 // Resolved is a profile checked against the environment: every
 // placeholder filled, every variable read, the credential found.
 type Resolved struct {
-	Profile    Profile
+	Profile Profile
+	// Params are the profile's params with every ${VAR} read and the
+	// derived ones (vertex-maas's {host}) added.
+	Params     map[string]string
 	BaseURL    string
 	MetricsURL string
 	Credential *auth.Credential
@@ -308,7 +319,7 @@ func Resolve(ctx context.Context, p Profile, opts Options) (*Resolved, error) {
 	if err != nil {
 		return nil, fail("%v", err)
 	}
-	return &Resolved{Profile: p, BaseURL: strings.TrimRight(base, "/"), MetricsURL: metrics, Credential: cred}, nil
+	return &Resolved{Profile: p, Params: params, BaseURL: strings.TrimRight(base, "/"), MetricsURL: metrics, Credential: cred}, nil
 }
 
 // DecodeJSON reads a JSON array of profiles, refusing unknown fields:

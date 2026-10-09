@@ -67,7 +67,7 @@ func TestOllamaResolvesWithNothingSet(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.BaseURL != "http://localhost:11434/v1" || r.Credential.Kind() != auth.None {
+	if r.BaseURL != "http://localhost:11434/v1" || r.Credential.Kind() != auth.None || r.Profile.ReasoningFormat != profile.ThinkTags {
 		t.Errorf("resolved = %+v", r)
 	}
 }
@@ -94,6 +94,9 @@ func TestVertexMaaSEndpoint(t *testing.T) {
 			}
 			if r.BaseURL != tc.want {
 				t.Errorf("BaseURL = %s\nwant      %s", r.BaseURL, tc.want)
+			}
+			if strings.Contains(r.Params["region"], "$") || r.Params["host"] == "" {
+				t.Errorf("Params = %v, want expanded and derived values", r.Params)
 			}
 			if r.Profile.BackendName() != "vertex-maas" || r.Credential.Kind() != auth.GoogleADC {
 				t.Errorf("backend %q, auth %s", r.Profile.BackendName(), r.Credential)
@@ -160,14 +163,15 @@ func TestAProfileExtendingVertexMaaSStillPricesAsVertexMaaS(t *testing.T) {
 
 func TestValidateReportsEveryProblem(t *testing.T) {
 	p := profile.Profile{
-		Name:       "Bad_Name",
-		Dialect:    "grpc",
-		BaseURL:    "ftp://x/{zone}",
-		Auth:       auth.Config{Kind: auth.APIKey},
-		MetricsURL: "not a url",
-		Usage:      profile.UsageOverrides{CachedTokens: "sometimes"},
-		Models:     []profile.Model{{ID: "m", Tier: "huge"}, {ID: "m"}, {ContextWindow: -1}},
-		Tiers:      map[profile.Tier]string{profile.Small: "unlisted", "tiny": "m"},
+		Name:            "Bad_Name",
+		Dialect:         "grpc",
+		BaseURL:         "ftp://x/{zone}",
+		Auth:            auth.Config{Kind: auth.APIKey},
+		MetricsURL:      "not a url",
+		Usage:           profile.UsageOverrides{CachedTokens: "sometimes"},
+		ReasoningFormat: "xml",
+		Models:          []profile.Model{{ID: "m", Tier: "huge"}, {ID: "m"}, {ContextWindow: -1}},
+		Tiers:           map[profile.Tier]string{profile.Small: "unlisted", "tiny": "m"},
 	}
 	err := p.Validate()
 	if err == nil {
@@ -181,6 +185,7 @@ func TestValidateReportsEveryProblem(t *testing.T) {
 		"needs env",
 		"metrics_url",
 		"usage.cached_tokens",
+		`reasoning_format "xml"`,
 		`tier "huge"`,
 		`model "m" is listed twice`,
 		"a model has no id",
@@ -192,7 +197,7 @@ func TestValidateReportsEveryProblem(t *testing.T) {
 			t.Errorf("missing %q in:\n%v", want, err)
 		}
 	}
-	if n := strings.Count(err.Error(), `profile "Bad_Name"`); n < 13 {
+	if n := strings.Count(err.Error(), `profile "Bad_Name"`); n < 14 {
 		t.Errorf("%d errors name the profile, want every one", n)
 	}
 }
