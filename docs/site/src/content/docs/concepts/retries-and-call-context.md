@@ -28,6 +28,7 @@ sees only what this layer gave up on.
 | **Not retried** | Any status marked `x-should-retry: false`; other 4xx; a canceled context; a request body that can't be sent again; a stream that breaks after it started, since replaying it would deliver tokens twice |
 | **Wait** | `retry-after-ms` if present, otherwise `retry-after` as seconds or an HTTP date, otherwise exponential backoff with jitter |
 | **Too long** | If the server asks for more than `MaxHeaderDelay` (default one minute), the response is handed back without waiting. Retrying sooner than asked just earns another 429 |
+| **No answer** | An attempt that gets no response headers within `HeaderTimeout` (default five minutes) is abandoned and retried like a dropped connection. The limit never applies to the body, so a long stream is unaffected |
 | **Default budget** | Two retries, starting at one second |
 
 What happened is recorded on a per-call `retry.Record`. An adapter stamps
