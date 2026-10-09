@@ -586,10 +586,15 @@ func (m *model) mapUsage(u *wireUsage, id, served string, md map[string]any) (*g
 		case u.PromptTokens != nil && u.CompletionTokens != nil:
 			um.TotalTokenCount = clamp32(*u.PromptTokens + *u.CompletionTokens)
 		}
-		if !m.opts.CachedTokensUnreliable && u.PromptTokensDetails != nil && u.PromptTokensDetails.CachedTokens != nil {
-			cached := *u.PromptTokensDetails.CachedTokens
-			d.CacheReadTokens = ptr(cached)
-			um.CachedContentTokenCount = clamp32(cached)
+		if !m.opts.CachedTokensUnreliable && u.PromptTokensDetails != nil {
+			if c := u.PromptTokensDetails.CachedTokens; c != nil {
+				d.CacheReadTokens = ptr(*c)
+				um.CachedContentTokenCount = clamp32(*c)
+			}
+			// genai's struct has no cache-write bucket; the Detail does.
+			if w := u.PromptTokensDetails.CreatedCacheTokens; w != nil {
+				d.CacheWriteTokens = ptr(*w)
+			}
 		}
 	}
 	resp := &llm.Response{CustomMetadata: md}

@@ -777,3 +777,15 @@ func TestAVertexErrorArrayIsUnwrapped(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 }
+
+// vLLM with --enable-prompt-tokens-details reports both halves of its
+// prefix cache: tokens read from it and tokens written to it.
+func TestVLLMCacheWritesAreRecorded(t *testing.T) {
+	s := newServer(t, reply{body: `{"id":"c","model":"m","choices":[{"index":0,"message":{"content":"ok"},"finish_reason":"stop"}],
+		"usage":{"prompt_tokens":446,"completion_tokens":51,"prompt_tokens_details":{"cached_tokens":0,"created_cache_tokens":432}}}`})
+	r := complete(t, client(t, s, nil).Model("m"), &llm.Request{Contents: []*genai.Content{userText("x")}})
+	d, _ := usage.FromMetadata(r.CustomMetadata)
+	if d.CacheWriteTokens == nil || *d.CacheWriteTokens != 432 || d.CacheReadTokens == nil || *d.CacheReadTokens != 0 {
+		t.Errorf("detail = read %v write %v; want a reported 0 read and 432 written", d.CacheReadTokens, d.CacheWriteTokens)
+	}
+}
