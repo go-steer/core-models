@@ -11,6 +11,24 @@
 
 ### Added
 
+- **`coremodels.Open`:** turns a profile into a `Provider` whose `Model(ctx,
+  id)` is an `llm.LLM`. Unbuilt dialects and unserved models are refused
+  before any request.
+- **`dialect/openaichat`:** the OpenAI Chat Completions adapter, on net/http
+  with its own wire types.
+  - Handles tools in both genai schema spellings, tool-call id matching
+    across providers, and streaming with tool-call fragments.
+  - Reads reasoning from `reasoning_content` or `reasoning`, and splits
+    inline `<think>` blocks.
+  - Maps usage without inventing zeros, uses the requested id as the
+    pricing key and keeps the served one, and returns typed `APIError`s.
+- **`toolwire`:** the shared check that every declared tool reaches the wire
+  with its whole schema. Ported from mast's `internal/toolcatalog`.
+- **`profile`:** `reasoning_format: think_tags`, set on the built-in
+  `ollama` profile.
+- **Conformance corpus:** real exchanges from Ollama 0.9.6 (`qwen3:1.7b`)
+  and Vertex AI partner models (`openai/gpt-oss-20b-maas`), replayed
+  offline in presubmit. The live smoke (`-tags live`) records new ones.
 - **`auth`:** resolves a profile's credential when the profile is opened:
   an API key or bearer token from a named variable, Google ADC, or none.
   `BearerTransport` fetches a fresh token per request. Secrets never appear

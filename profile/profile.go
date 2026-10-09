@@ -118,6 +118,8 @@ type Profile struct {
 	Capabilities Capabilities `json:"capabilities,omitzero" yaml:"capabilities,omitempty"`
 	// Usage overrides how reported usage fields are trusted.
 	Usage UsageOverrides `json:"usage,omitzero" yaml:"usage,omitempty"`
+	// ReasoningFormat says where the server puts reasoning.
+	ReasoningFormat ReasoningFormat `json:"reasoning_format,omitempty" yaml:"reasoning_format,omitempty"`
 	// MetricsURL is the server's Prometheus endpoint, for the opt-in
 	// KV-cache sampler (docs/design.md §8).
 	MetricsURL string `json:"metrics_url,omitempty" yaml:"metrics_url,omitempty"`
@@ -154,6 +156,20 @@ type Capabilities struct {
 	// Streaming: the server streams responses.
 	Streaming *bool `json:"streaming,omitempty" yaml:"streaming,omitempty"`
 }
+
+// ReasoningFormat says where a server puts a model's reasoning.
+type ReasoningFormat string
+
+const (
+	// ReasoningField (the default): in reasoning_content or reasoning,
+	// apart from the answer, or not at all.
+	ReasoningField ReasoningFormat = ""
+	// ThinkTags: inline at the start of the answer as <think>…</think>
+	// (Ollama; vLLM and SGLang without a reasoning parser). The adapter
+	// splits the block out, so it never reaches the product as answer
+	// text.
+	ThinkTags ReasoningFormat = "think_tags"
+)
 
 // UsageOverrides adjust how reported usage is trusted.
 type UsageOverrides struct {
@@ -239,6 +255,9 @@ func (p Profile) Validate() error {
 	}
 	if p.Usage.CachedTokens != Reported && p.Usage.CachedTokens != Unreliable {
 		bad("usage.cached_tokens %q is not \"unreliable\" or unset", p.Usage.CachedTokens)
+	}
+	if p.ReasoningFormat != ReasoningField && p.ReasoningFormat != ThinkTags {
+		bad("reasoning_format %q is not \"think_tags\" or unset", p.ReasoningFormat)
 	}
 	if !p.Open() && len(p.Models) == 0 {
 		bad("lists no models; list them, or set open_models for a server that serves what it was given")

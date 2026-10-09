@@ -41,6 +41,7 @@ A self-hosted vLLM server, starting from the built-in `vllm` template:
 | `open_models` | Accept any model id, not only the listed ones. Set on every self-hosted template |
 | `capabilities` | `response_schema`, `reasoning_echo`, `parallel_tool_calls`, `server_tools`, `streaming`. Each is true, false, or unset; unset reads as absent |
 | `usage.cached_tokens` | `unreliable` records cached tokens as not reported even when the server sends them |
+| `reasoning_format` | `think_tags` for a server that puts reasoning inline as a leading `<think>…</think>` block (Ollama; vLLM or SGLang without a reasoning parser). The block becomes a reasoning part instead of answer text |
 | `metrics_url` | The server's Prometheus endpoint, for the optional KV-cache sampler |
 | `models` | `id`, plus an optional `tier` (`small`, `mid` or `frontier`) and `context_window` |
 | `tiers` | The model for each tier the profile can fill |
@@ -53,7 +54,7 @@ A self-hosted vLLM server, starting from the built-in `vllm` template:
 | Profile | Dialect | Endpoint | Auth | Notes |
 |---|---|---|---|---|
 | `vertex-maas` | openai-chat | Vertex AI's OpenAI-compatible endpoint for the project and region | Google ADC | Project from `GOOGLE_CLOUD_PROJECT`. Region from `GOOGLE_CLOUD_LOCATION`, default `global`. Ids are publisher-qualified, such as `openai/gpt-oss-20b-maas` |
-| `ollama` | openai-chat | `http://localhost:11434/v1` | none | Works with nothing set |
+| `ollama` | openai-chat | `http://localhost:11434/v1` | none | Works with nothing set. `reasoning_format: think_tags` |
 | `vllm` | openai-chat | *template: set `base_url`* | none | Parallel tool calls declared |
 | `sglang` | openai-chat | *template: set `base_url`* | none | Parallel tool calls declared |
 | `openai-compatible` | openai-chat | *template: set `base_url`* | none | For any other OpenAI-compatible endpoint; set `auth` too |
@@ -64,6 +65,17 @@ enforce it only with guided decoding enabled. A server that accepts the
 field and ignores it would turn a guaranteed-parseable answer into a
 paragraph at run time. If your server enforces it, declare it in your
 profile.
+
+## Opening a profile
+
+```go
+p, err := coremodels.Open(ctx, prof, coremodels.Options{})
+m, err := p.Model(ctx, "Qwen/Qwen3-Coder-Next")   // an llm.LLM
+```
+
+`Open` resolves the profile and picks its dialect. `Model` refuses an id
+the profile doesn't serve. A dialect that isn't built yet fails at `Open`
+and says which phase brings it.
 
 ## When a profile is checked
 

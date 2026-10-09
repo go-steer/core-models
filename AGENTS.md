@@ -35,8 +35,9 @@ decisions (§2). Read it before proposing a change of shape.
 - the `adkv1` and `adkv2` adapter modules;
 - CI and the docs site.
 
-L1, the `openai-chat` dialect, is next. No provider adapters exist yet. [`docs/design.md`](./docs/design.md) §11 lists the
-phases.
+L1 is under way. The `openai-chat` dialect, `coremodels.Open` and a
+conformance corpus recorded from Ollama and Vertex AI exist; mast adoption
+is next. [`docs/design.md`](./docs/design.md) §11 lists the phases.
 
 ## Reading order
 
@@ -183,12 +184,16 @@ let the product decide.
 ## Layout
 
 ```
+coremodels.go        Open: a profile -> a Provider of llm.LLMs
 llm/                 the contract: LLM, Request, Response (mirrors ADK's model types)
 usage/               usage.Detail, the normalized usage record
 callctx/             per-call context markers shared with the products
 retry/               HTTP-layer retry: Policy.Transport, Record
 auth/                credential resolution: api_key, bearer, google_adc, none
 profile/             provider profiles: schema, built-ins, extends, Resolve
+toolwire/            the shared tool-schema invariant every adapter is held to
+dialect/openaichat/  OpenAI Chat Completions (Vertex MaaS, vLLM, SGLang, Ollama, …)
+testdata/conformance/  recorded exchanges from real servers, replayed in presubmit
 adkv1/  (module)     adapter to google.golang.org/adk v1  — core-agent
 adkv2/  (module)     adapter to google.golang.org/adk/v2  — mast
 docs/design.md       the design; decisions in §2
@@ -200,7 +205,7 @@ scripts/             verify-internal-links.py (docs site)
 .github/workflows/   thin delegators to dev/ci/presubmits/
 ```
 
-Future packages (`dialect/*`,
+Future packages (other `dialect/*`,
 `kvmetrics/`, `pricing/`, `toolwire/`, `conformance/`) are laid out in
 [`docs/design.md`](./docs/design.md) §3. Create them in the phase that fills
 them, not before.
@@ -221,10 +226,27 @@ is one line there. The adapter modules build against the core in this repo
 through a `replace ../` directive. Consumers ignore that directive, so it is
 safe to commit. Don't add a `go.work`; it is gitignored.
 
-Tests run offline and need no credentials. Tests that call a live provider
-skip cleanly when their credentials are absent, and sit behind a build tag
-once they exist. Recorded fixtures replace live calls in presubmit
-([`docs/design.md`](./docs/design.md) §10).
+Tests run offline and need no credentials.
+
+- **Conformance corpus.** `testdata/conformance/<server>/` holds real
+  exchanges recorded from real servers. `TestConformance` replays them on
+  every run: the adapter must send the request it sent then, and the
+  shared scenarios in `scenarios_test.go` must pass on what the server
+  answered then.
+- **Live smoke** (`-tags live`, never in presubmit) runs the same scenarios
+  against a real server, and records a new corpus with
+  `CORE_MODELS_LIVE_RECORD`:
+
+  ```bash
+  CORE_MODELS_LIVE_PROFILE=ollama CORE_MODELS_LIVE_MODEL=qwen3:1.7b \
+  CORE_MODELS_LIVE_RECORD=testdata/conformance/<server> go test -tags live -run TestLive -v .
+  ```
+
+  Add a `meta.json` (profile, model), and **redact anything identifying
+  from the recorded request paths before committing**. A Vertex AI path
+  carries the GCP project id; replace it with `PROJECT`. Bodies never carry
+  credentials (the recorder drops headers), but read them before
+  committing anyway.
 
 ## How to commit and push
 

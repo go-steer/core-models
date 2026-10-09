@@ -5,9 +5,10 @@ sidebar:
   order: 4
 ---
 
-core-models has **no provider adapters yet**. This page is the plan. Gemini
-and Claude keep working in mast and core-agent through their existing
-code until they move here.
+core-models has **one adapter so far: OpenAI Chat Completions**. It has
+been run against a local Ollama server and Vertex AI's partner-model
+endpoint. Gemini and Claude keep working in mast and core-agent through
+their existing code until they move here.
 
 ## Three wire formats, not one adapter per vendor
 
@@ -15,7 +16,7 @@ Most models are reachable through one of three API shapes:
 
 | Wire format | Reaches | Status |
 |---|---|---|
-| OpenAI Chat Completions | Vertex AI partner models, xAI, vLLM, SGLang, Ollama, llama.cpp, NVIDIA NIM, Groq, Together, Fireworks, DeepSeek, Mistral, any LiteLLM or OpenRouter endpoint | **next** |
+| OpenAI Chat Completions | Vertex AI partner models, xAI, vLLM, SGLang, Ollama, llama.cpp, NVIDIA NIM, Groq, Together, Fireworks, DeepSeek, Mistral, any LiteLLM or OpenRouter endpoint | **built** (`dialect/openaichat`) |
 | OpenAI Responses | OpenAI, xAI | planned |
 | Anthropic Messages | Claude on Anthropic, Vertex AI and Bedrock | moves here from the products |
 | genai | Gemini on the Developer API and Vertex AI | moves here from the products |
@@ -40,6 +41,21 @@ declares:
 A profile that can't be resolved fails when it is loaded, naming the
 profile, rather than at the first request. Every field and the built-in
 profiles are on the [profiles reference](/reference/profiles/).
+
+## Tested against real servers
+
+Each recorded server below is replayed offline on every pull request. The
+adapter must send the same requests it sent when recorded, and produce the
+same answers:
+
+| Server | Model | What it showed |
+|---|---|---|
+| Ollama 0.9.6 (local) | `qwen3:1.7b` | Reasoning arrives inline as `<think>` tags. The `ollama` profile splits them out (`reasoning_format: think_tags`) |
+| Vertex AI partner models (global) | `openai/gpt-oss-20b-maas` | Reasoning in a separate field; prompt-cache hits reported (`cached_tokens: 128` on a follow-up turn) |
+
+The scenarios are a plain answer, a full tool-call round trip, and a
+streamed answer. Recording a new server is one command; see
+`conformance_test.go`.
 
 ## Self-hosted models
 

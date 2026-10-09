@@ -58,7 +58,7 @@ import it. Product policy stays in each product.
 | D2 | **The core module depends on genai and vendor SDKs only, never ADK. Two nested shim modules, `adkv1` and `adkv2`, adapt it to each ADK major.** | mast is on `adk/v2` and core-agent is on `adk` v1.7. Their `model.LLM`, `LLMRequest` and `LLMResponse` are identical in fields but are distinct Go types. The shims are field copies. The `adkv1` shim is deleted whenever core-agent moves to ADK v2; that migration is a separate track and does not block this work. |
 | D3 | **Pricing moves into the library, in a later phase (L6)** | The two catalogs diverged in opposite directions: mast keys rates by (backend, model), and core-agent has the 1-hour cache-write rate. They are merged once, after the adapters land. Until then each repo prices new providers through its own catalog's override layer. |
 | D4 | **New providers first, then extract the existing ones** | New providers are the requirement. The contract is still designed against the existing Gemini and Anthropic adapters ([§4](#4-the-contract)), so extracting them later is a move, not a redesign. |
-| D5 | **The library does not use ADK's `model/openaimodel`** | It now speaks both Responses and Chat Completions, but it exists only in ADK v2, so core-agent cannot use it (D2). The OpenAI dialects are written on `openai-go/v3` directly. That module is already in mast's module graph through ADK v2. |
+| D5 | **The library does not use ADK's `model/openaimodel`** *(amended in L1: `openai-chat` is written on net/http and its own wire types, not openai-go; see §7.1)* | It now speaks both Responses and Chat Completions, but it exists only in ADK v2, so core-agent cannot use it (D2). The OpenAI dialects are written on `openai-go/v3` directly. That module is already in mast's module graph through ADK v2. |
 | D6 | **No proxy as a required hop** | Carried over from mast model-support §4.7. LiteLLM or OpenRouter is reachable as an ordinary `openai-chat` profile; it is never in the path by default. |
 
 ## 3. Module layout
@@ -308,6 +308,26 @@ them.**
 ## 7. Dialects
 
 ### 7.1 `openai-chat` (L1): the leverage
+
+**As built** (`dialect/openaichat`, L1): on net/http and the package's own
+wire types rather than openai-go. These servers are OpenAI-shaped, not
+OpenAI, so the adapter does three things an SDK's types get in the way of:
+
+- **Pointer fields** keep a usage count the server never sent distinct
+  from a zero it did, which `usage.Detail` requires.
+- **Non-standard fields** (`reasoning_content`, `reasoning`) are read and
+  echoed natively.
+- **No new module**, and so no Azure or AWS entries in `go.sum`.
+
+fantasy needed around 600 lines of hooks to bend openai-go around the same
+servers. openai-go remains the likely base for `openai-responses` (L2),
+where the server is OpenAI.
+
+The first live runs found one quirk the table below did not have. Ollama
+0.9.6 puts a reasoning model's thinking inline as a leading
+`<think>…</think>` block in `content`, so profiles gained
+`reasoning_format: think_tags`. The built-in `ollama` profile sets it. The
+adapter splits the block into a thought part, chunk-boundary safe.
 
 One adapter reaches Vertex MaaS, xAI, vLLM, SGLang, Ollama, llama.cpp, NIM, the
 managed long tail, and any LiteLLM or OpenRouter endpoint.
