@@ -789,3 +789,24 @@ func TestVLLMCacheWritesAreRecorded(t *testing.T) {
 		t.Errorf("detail = read %v write %v; want a reported 0 read and 432 written", d.CacheReadTokens, d.CacheWriteTokens)
 	}
 }
+
+func TestExtraBodyIsAddedNeverOverrides(t *testing.T) {
+	s := newServer(t, reply{body: okReply})
+	m := client(t, s, func(o *openaichat.Options) {
+		o.ExtraBody = map[string]any{"chat_template_kwargs": map[string]any{"enable_thinking": true}, "top_k": 20}
+	}).Model("gemma")
+	complete(t, m, &llm.Request{Contents: []*genai.Content{userText("x")}})
+	b := s.body(0)
+	if asJSON(t, b["chat_template_kwargs"]) != `{"enable_thinking":true}` || b["top_k"] != 20.0 || b["model"] != "gemma" {
+		t.Errorf("body = %v", b)
+	}
+
+	s = newServer(t, reply{body: okReply})
+	clash := client(t, s, func(o *openaichat.Options) { o.ExtraBody = map[string]any{"model": "other"} }).Model("gemma")
+	if err := generateErr(clash, &llm.Request{Contents: []*genai.Content{userText("x")}}, false); err == nil || !strings.Contains(err.Error(), `extra_body sets "model"`) {
+		t.Errorf("err = %v, want the collision refused", err)
+	}
+	if len(s.bodies) != 0 {
+		t.Error("a refused request reached the server")
+	}
+}

@@ -93,6 +93,7 @@ func Open(ctx context.Context, p profile.Profile, opts Options) (Provider, error
 				ResponseSchema:     new(profile.Has(caps.ResponseSchema)),
 				ReasoningEcho:      new(profile.Has(caps.ReasoningEcho)),
 				NoForcedToolChoice: new(caps.ForcedToolChoice != nil && !*caps.ForcedToolChoice),
+				ExtraBody:          rp.ExtraBodyFor(id),
 			})
 		}}, nil
 	case profile.OpenAIResponses, profile.Anthropic, profile.Gemini:

@@ -147,6 +147,7 @@ func (p Profile) clone() Profile {
 	c.Params = maps.Clone(p.Params)
 	c.Models = slices.Clone(p.Models)
 	c.Tiers = maps.Clone(p.Tiers)
+	c.ExtraBody = maps.Clone(p.ExtraBody)
 	if p.Auth.Scopes != nil {
 		c.Auth.Scopes = slices.Clone(p.Auth.Scopes)
 	}
@@ -203,6 +204,12 @@ func Expand(p Profile) (Profile, error) {
 	}
 	if p.ReasoningFormat != "" {
 		out.ReasoningFormat = p.ReasoningFormat
+	}
+	for k, v := range p.ExtraBody {
+		if out.ExtraBody == nil {
+			out.ExtraBody = map[string]any{}
+		}
+		out.ExtraBody[k] = v
 	}
 	if p.MetricsURL != "" {
 		out.MetricsURL = p.MetricsURL

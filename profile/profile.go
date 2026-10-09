@@ -120,6 +120,12 @@ type Profile struct {
 	Usage UsageOverrides `json:"usage,omitzero" yaml:"usage,omitempty"`
 	// ReasoningFormat says where the server puts reasoning.
 	ReasoningFormat ReasoningFormat `json:"reasoning_format,omitempty" yaml:"reasoning_format,omitempty"`
+	// ExtraBody adds vendor-specific fields to every request: switches a
+	// server takes that the dialect does not model, such as
+	// chat_template_kwargs {enable_thinking: true} for Gemma 4 on vLLM,
+	// reasoning_effort, or top_k. A field the adapter sets itself (model,
+	// messages, tools, …) cannot be set here.
+	ExtraBody map[string]any `json:"extra_body,omitempty" yaml:"extra_body,omitempty"`
 	// MetricsURL is the server's Prometheus endpoint, for the opt-in
 	// KV-cache sampler (docs/design.md §8).
 	MetricsURL string `json:"metrics_url,omitempty" yaml:"metrics_url,omitempty"`
@@ -140,6 +146,9 @@ type Model struct {
 	ContextWindow int    `json:"context_window,omitempty" yaml:"context_window,omitempty"`
 	// Capabilities override the profile's for this model only.
 	Capabilities Capabilities `json:"capabilities,omitzero" yaml:"capabilities,omitempty"`
+	// ExtraBody adds vendor fields to this model's requests, over the
+	// profile's ExtraBody.
+	ExtraBody map[string]any `json:"extra_body,omitempty" yaml:"extra_body,omitempty"`
 }
 
 // Capabilities are declared, never probed. Nil means not declared,
@@ -181,6 +190,35 @@ func (c Capabilities) overlay(o Capabilities) Capabilities {
 		Streaming:         pick(c.Streaming, o.Streaming),
 		ForcedToolChoice:  pick(c.ForcedToolChoice, o.ForcedToolChoice),
 	}
+}
+
+// ReservedBodyKeys are the request fields an adapter sets itself, which
+// ExtraBody may not override.
+var ReservedBodyKeys = []string{
+	"model", "messages", "tools", "tool_choice", "stream", "stream_options",
+	"max_tokens", "max_completion_tokens", "temperature", "top_p", "stop",
+	"seed", "presence_penalty", "frequency_penalty", "response_format", "n",
+}
+
+// ExtraBodyFor is the profile's ExtraBody with the listed model's laid
+// over it, key by key. Nil when neither sets any.
+func (p Profile) ExtraBodyFor(id string) map[string]any {
+	var out map[string]any
+	add := func(m map[string]any) {
+		for k, v := range m {
+			if out == nil {
+				out = map[string]any{}
+			}
+			out[k] = v
+		}
+	}
+	add(p.ExtraBody)
+	for _, m := range p.Models {
+		if m.ID == id {
+			add(m.ExtraBody)
+		}
+	}
+	return out
 }
 
 // CapabilitiesFor is the profile's capabilities with the listed
@@ -298,6 +336,17 @@ func (p Profile) Validate() error {
 	}
 	if p.ReasoningFormat != ReasoningField && p.ReasoningFormat != ThinkTags {
 		bad("reasoning_format %q is not \"think_tags\" or unset", p.ReasoningFormat)
+	}
+	checkExtra := func(where string, m map[string]any) {
+		for _, k := range ReservedBodyKeys {
+			if _, ok := m[k]; ok {
+				bad("%s extra_body sets %q, which the adapter sets itself", where, k)
+			}
+		}
+	}
+	checkExtra("profile", p.ExtraBody)
+	for _, m := range p.Models {
+		checkExtra(fmt.Sprintf("model %q", m.ID), m.ExtraBody)
 	}
 	if !p.Open() && len(p.Models) == 0 {
 		bad("lists no models; list them, or set open_models for a server that serves what it was given")

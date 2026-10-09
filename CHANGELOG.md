@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## v0.4.0 (2026-10-09)
+
+### Added
+
+- **`extra_body` in profiles, per profile and per model.** These are vendor
+  request fields the dialect doesn't model, merged into each request, such
+  as `chat_template_kwargs: {enable_thinking: true}` for Gemma 4 on vLLM.
+  A field the adapter sets itself is refused when the profile is validated,
+  and again at request time. The example profile in `deploy/gke-vllm`
+  enables Gemma 4's thinking, without which it looped on identical tool
+  calls (go-steer/mast#514).
+
 ### Added
 
 - **vLLM cache writes:** `created_cache_tokens`, the prompt tokens vLLM
