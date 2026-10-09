@@ -2,6 +2,40 @@
 
 ## Unreleased
 
+## v0.2.0 (2026-10-09)
+
+Fixes found by live runs against five Vertex AI partner models, before the
+tool-calling parity run.
+
+### Added
+
+- **Per-model capabilities:** `models[].capabilities` overrides a profile's
+  capabilities for one model, via `Profile.CapabilitiesFor(id)`. One
+  profile serves models that differ: Kimi may need reasoning echoed back,
+  and gpt-oss rejects a forced tool call.
+- **`forced_tool_choice` capability:** declared false, a forced tool call
+  (`required`, or one named tool) is sent as `auto` and the response is
+  marked `core_models.tool_choice_downgraded`.
+  - The built-in `vertex-maas` profile lists gpt-oss-20b and gpt-oss-120b
+    with it, per Google's function-calling notes.
+  - mast's final-report path forces a named `finish_task` call, which is
+    the case this keeps working.
+- **`openaichat.Client.ModelWith`:** builds a model with per-model options.
+- **Conformance corpus:** grows to six servers, adding Kimi K2 Thinking,
+  Qwen3 Coder 480B, GLM 5.2 and Llama 4 Maverick (`us-east5`) on Vertex AI.
+  The existing recordings were re-recorded.
+
+### Changed
+
+- **`tool_choice: "auto"` default:** sent whenever tools are offered and the
+  caller expressed no choice, instead of leaving it to the server. Qwen on
+  Vertex AI documents worse tool calling when it is unset.
+
+### Fixed
+
+- **Vertex AI errors:** wrapped in a one-element JSON array, they are now
+  parsed into `APIError` with a clean message instead of raw JSON.
+
 ## v0.1.0 (2026-10-09)
 
 First release: the L0 foundation and the first dialect (L1, core-models half).

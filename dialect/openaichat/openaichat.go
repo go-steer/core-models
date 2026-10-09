@@ -78,6 +78,17 @@ type Options struct {
 	// ThinkTags: the server puts reasoning inline in content as a leading
 	// <think>…</think> block; split it into a reasoning part.
 	ThinkTags bool
+	// NoForcedToolChoice: the model rejects "required" and named tool
+	// choices; send "auto" instead and mark the response.
+	NoForcedToolChoice bool
+}
+
+// ModelOptions are the per-model refinements of Options: one server
+// serves many models, and what it honors can differ between them.
+type ModelOptions struct {
+	ResponseSchema     *bool
+	ReasoningEcho      *bool
+	NoForcedToolChoice *bool
 }
 
 // Client is a connection to one server. Safe for concurrent use.
@@ -116,14 +127,32 @@ func New(opts Options) (*Client, error) {
 	}, nil
 }
 
-// Model returns the model id on this server as an llm.LLM.
+// Model returns the model id on this server as an llm.LLM, with the
+// Client's options.
 func (c *Client) Model(id string) llm.LLM {
-	return &model{Client: c, id: id}
+	return c.ModelWith(id, ModelOptions{})
+}
+
+// ModelWith returns the model id with mo laid over the Client's
+// options.
+func (c *Client) ModelWith(id string, mo ModelOptions) llm.LLM {
+	o := c.opts
+	if mo.ResponseSchema != nil {
+		o.ResponseSchema = *mo.ResponseSchema
+	}
+	if mo.ReasoningEcho != nil {
+		o.ReasoningEcho = *mo.ReasoningEcho
+	}
+	if mo.NoForcedToolChoice != nil {
+		o.NoForcedToolChoice = *mo.NoForcedToolChoice
+	}
+	return &model{Client: c, id: id, opts: o}
 }
 
 type model struct {
 	*Client
-	id string
+	id   string
+	opts Options // the Client's, refined for this model
 }
 
 func (m *model) Name() string { return m.id }
@@ -163,7 +192,7 @@ func (m *model) GenerateContent(ctx context.Context, req *llm.Request, stream bo
 		if req == nil {
 			req = &llm.Request{}
 		}
-		body, err := m.buildRequest(req, stream)
+		body, notes, err := m.buildRequest(req, stream)
 		if err != nil {
 			yield(nil, err)
 			return
@@ -183,6 +212,7 @@ func (m *model) GenerateContent(ctx context.Context, req *llm.Request, stream bo
 				return
 			}
 			stampRetry(final, rec)
+			stampNotes(final, notes)
 			yield(final, nil)
 			return
 		}
@@ -193,6 +223,7 @@ func (m *model) GenerateContent(ctx context.Context, req *llm.Request, stream bo
 			}
 			if !r.Partial {
 				stampRetry(r, rec)
+				stampNotes(r, notes)
 			}
 			if !yield(r, nil) {
 				return
@@ -229,7 +260,14 @@ func apiError(resp *http.Response) error {
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 	e := &APIError{StatusCode: resp.StatusCode}
 	var env errorEnvelope
-	if json.Unmarshal(raw, &env) == nil {
+	// Vertex AI wraps its error object in a one-element array.
+	var wrapped []errorEnvelope
+	if json.Unmarshal(raw, &wrapped) == nil && len(wrapped) > 0 {
+		env = wrapped[0]
+	} else {
+		_ = json.Unmarshal(raw, &env)
+	}
+	{
 		switch {
 		case env.Error != nil:
 			e.Message, e.Type, e.Code = env.Error.Message, env.Error.Type, codeString(env.Error.Code)
@@ -570,6 +608,22 @@ func clamp32(n int64) int32 {
 		return 0
 	}
 	return int32(n)
+}
+
+// ToolChoiceKey marks a response whose request asked for a forced tool
+// call the model cannot take, and was sent with "auto" instead.
+const ToolChoiceKey = "core_models.tool_choice_downgraded"
+
+func stampNotes(r *llm.Response, notes map[string]any) {
+	if len(notes) == 0 {
+		return
+	}
+	if r.CustomMetadata == nil {
+		r.CustomMetadata = map[string]any{}
+	}
+	for k, v := range notes {
+		r.CustomMetadata[k] = v
+	}
 }
 
 func stampRetry(r *llm.Response, rec *retry.Record) {

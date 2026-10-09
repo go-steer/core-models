@@ -1,0 +1,6 @@
+{
+  "profile": "vertex-maas",
+  "model": "zai-org/glm-5.2-maas",
+  "recorded": "2026-10-09",
+  "server": "Vertex AI partner models, global (text and a tool call in the same turn)"
+}
