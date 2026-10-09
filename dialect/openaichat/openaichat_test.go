@@ -710,3 +710,70 @@ func TestThinkTagsInAStream(t *testing.T) {
 		t.Errorf("final parts = %+v", p)
 	}
 }
+
+func TestToolChoiceIsAutoWhenToolsAreOfferedAndNothingIsAsked(t *testing.T) {
+	s := newServer(t, reply{body: okReply}, reply{body: okReply})
+	m := client(t, s, nil).Model("qwen")
+	tools := []*genai.Tool{{FunctionDeclarations: []*genai.FunctionDeclaration{{Name: "f"}}}}
+	complete(t, m, &llm.Request{Contents: []*genai.Content{userText("x")}, Config: &genai.GenerateContentConfig{Tools: tools}})
+	if got := s.body(0)["tool_choice"]; got != "auto" {
+		t.Errorf("tool_choice = %v, want auto with tools offered and no choice expressed", got)
+	}
+	complete(t, m, &llm.Request{Contents: []*genai.Content{userText("x")}})
+	if _, set := s.body(1)["tool_choice"]; set {
+		t.Error("tool_choice sent on a request with no tools")
+	}
+}
+
+// mast's final-report path forces a named finish_task call. A model
+// that rejects a forced choice (gpt-oss on Vertex AI) gets "auto" with
+// the same tools, and the response says it was not forced.
+func TestAForcedChoiceIsDowngradedForAModelThatRejectsIt(t *testing.T) {
+	force := &genai.GenerateContentConfig{
+		Tools: []*genai.Tool{{FunctionDeclarations: []*genai.FunctionDeclaration{{Name: "finish_task"}}}},
+		ToolConfig: &genai.ToolConfig{FunctionCallingConfig: &genai.FunctionCallingConfig{
+			Mode: genai.FunctionCallingConfigModeAny, AllowedFunctionNames: []string{"finish_task"},
+		}},
+	}
+	req := &llm.Request{Contents: []*genai.Content{userText("report")}, Config: force}
+
+	s := newServer(t, reply{body: okReply}, reply{body: okReply}, reply{sse: true, body: sse(`{"choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}]}`)})
+	c := client(t, s, nil)
+	r := complete(t, c.ModelWith("gpt-oss", openaichat.ModelOptions{NoForcedToolChoice: new(true)}), req)
+	if got := s.body(0)["tool_choice"]; got != "auto" {
+		t.Errorf("tool_choice = %v, want auto", got)
+	}
+	if r.CustomMetadata[openaichat.ToolChoiceKey] != true {
+		t.Errorf("the downgrade was not marked: %v", r.CustomMetadata)
+	}
+
+	r = complete(t, c.Model("qwen"), req)
+	if got := asJSON(t, s.body(1)["tool_choice"]); got != `{"function":{"name":"finish_task"},"type":"function"}` {
+		t.Errorf("a model that takes a forced choice got %s", got)
+	}
+	if _, marked := r.CustomMetadata[openaichat.ToolChoiceKey]; marked {
+		t.Error("an undowngraded request was marked")
+	}
+
+	var final *llm.Response
+	for rr, err := range c.ModelWith("gpt-oss", openaichat.ModelOptions{NoForcedToolChoice: new(true)}).GenerateContent(context.Background(), req, true) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !rr.Partial {
+			final = rr
+		}
+	}
+	if final.CustomMetadata[openaichat.ToolChoiceKey] != true {
+		t.Error("a streamed downgrade was not marked on the final response")
+	}
+}
+
+func TestAVertexErrorArrayIsUnwrapped(t *testing.T) {
+	s := newServer(t, reply{status: 404, body: `[{"error": {"code": 404, "message": "Publisher model x was not found or your project does not have access to it.", "status": "NOT_FOUND"}}]`})
+	err := generateErr(client(t, s, nil).Model("m"), &llm.Request{Contents: []*genai.Content{userText("x")}}, false)
+	var ae *openaichat.APIError
+	if !errors.As(err, &ae) || ae.StatusCode != 404 || !strings.HasPrefix(ae.Message, "Publisher model x was not found") {
+		t.Errorf("err = %v", err)
+	}
+}

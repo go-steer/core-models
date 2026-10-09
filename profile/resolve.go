@@ -103,6 +103,13 @@ var builtins = map[string]Profile{
 		Auth:       auth.Config{Kind: auth.GoogleADC},
 		Backend:    "vertex-maas",
 		OpenModels: yes(),
+		// Known per-model quirks, from Google's function-calling notes
+		// for open models. Listing a model does not close the profile:
+		// open_models still admits any id.
+		Models: []Model{
+			{ID: "openai/gpt-oss-20b-maas", Capabilities: Capabilities{ForcedToolChoice: no()}},
+			{ID: "openai/gpt-oss-120b-maas", Capabilities: Capabilities{ForcedToolChoice: no()}},
+		},
 		Capabilities: Capabilities{
 			ResponseSchema: no(), ReasoningEcho: no(), ParallelToolCalls: no(),
 			ServerTools: no(), Streaming: yes(),
@@ -190,6 +197,7 @@ func Expand(p Profile) (Profile, error) {
 	overlay(&out.Capabilities.ParallelToolCalls, p.Capabilities.ParallelToolCalls)
 	overlay(&out.Capabilities.ServerTools, p.Capabilities.ServerTools)
 	overlay(&out.Capabilities.Streaming, p.Capabilities.Streaming)
+	overlay(&out.Capabilities.ForcedToolChoice, p.Capabilities.ForcedToolChoice)
 	if p.Usage.CachedTokens != "" {
 		out.Usage.CachedTokens = p.Usage.CachedTokens
 	}

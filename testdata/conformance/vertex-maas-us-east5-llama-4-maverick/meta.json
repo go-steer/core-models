@@ -1,0 +1,6 @@
+{
+  "profile": "vertex-maas",
+  "model": "meta/llama-4-maverick-17b-128e-instruct-maas",
+  "recorded": "2026-10-09",
+  "server": "Vertex AI partner models, us-east5 only (404 at global)"
+}

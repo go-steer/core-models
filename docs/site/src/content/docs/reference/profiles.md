@@ -39,12 +39,18 @@ A self-hosted vLLM server, starting from the built-in `vllm` template:
 | `auth.scopes` | OAuth scopes for `google_adc`. Defaults to cloud-platform |
 | `backend` | The name prices are keyed on. Defaults to `name`, except that a profile extending `vertex-maas` keeps `vertex-maas` |
 | `open_models` | Accept any model id, not only the listed ones. Set on every self-hosted template |
-| `capabilities` | `response_schema`, `reasoning_echo`, `parallel_tool_calls`, `server_tools`, `streaming`. Each is true, false, or unset; unset reads as absent |
+| `capabilities` | `response_schema`, `reasoning_echo`, `parallel_tool_calls`, `server_tools`, `streaming`, `forced_tool_choice`. Each is true, false, or unset. Unset reads as absent, except `forced_tool_choice`, which is assumed supported unless declared false |
 | `usage.cached_tokens` | `unreliable` records cached tokens as not reported even when the server sends them |
 | `reasoning_format` | `think_tags` for a server that puts reasoning inline as a leading `<think>…</think>` block (Ollama; vLLM or SGLang without a reasoning parser). The block becomes a reasoning part instead of answer text |
 | `metrics_url` | The server's Prometheus endpoint, for the optional KV-cache sampler |
-| `models` | `id`, plus an optional `tier` (`small`, `mid` or `frontier`) and `context_window` |
+| `models` | `id`, plus an optional `tier` (`small`, `mid` or `frontier`), `context_window`, and `capabilities` that override the profile's for that model only |
 | `tiers` | The model for each tier the profile can fill |
+
+Capabilities are per profile and refined per model, because two models
+behind one server can differ: one needs its reasoning echoed back, another
+rejects a forced tool call. With `forced_tool_choice: false`, a request
+that forces a tool call (`required`, or one named tool) is sent as `auto`
+instead, and the response carries `core_models.tool_choice_downgraded`.
 
 `extends` merges `params` and `tiers` key by key. It replaces `models` and
 `auth` as a whole, and overrides each capability on its own.
@@ -53,7 +59,7 @@ A self-hosted vLLM server, starting from the built-in `vllm` template:
 
 | Profile | Dialect | Endpoint | Auth | Notes |
 |---|---|---|---|---|
-| `vertex-maas` | openai-chat | Vertex AI's OpenAI-compatible endpoint for the project and region | Google ADC | Project from `GOOGLE_CLOUD_PROJECT`. Region from `GOOGLE_CLOUD_LOCATION`, default `global`. Ids are publisher-qualified, such as `openai/gpt-oss-20b-maas` |
+| `vertex-maas` | openai-chat | Vertex AI's OpenAI-compatible endpoint for the project and region | Google ADC | Project from `GOOGLE_CLOUD_PROJECT`. Region from `GOOGLE_CLOUD_LOCATION`, default `global`. Ids are publisher-qualified, such as `openai/gpt-oss-20b-maas`. Lists the gpt-oss models with `forced_tool_choice: false`, per Google's function-calling notes; any other id is still accepted |
 | `ollama` | openai-chat | `http://localhost:11434/v1` | none | Works with nothing set. `reasoning_format: think_tags` |
 | `vllm` | openai-chat | *template: set `base_url`* | none | Parallel tool calls declared |
 | `sglang` | openai-chat | *template: set `base_url`* | none | Parallel tool calls declared |
@@ -65,6 +71,16 @@ enforce it only with guided decoding enabled. A server that accepts the
 field and ignores it would turn a guaranteed-parseable answer into a
 paragraph at run time. If your server enforces it, declare it in your
 profile.
+
+### A regional Vertex AI profile
+
+Some partner models are served from one region only. Llama 4 Maverick, for
+example, returns 404 at `global` and answers at `us-east5`. Give it a
+profile of its own rather than moving every model's region:
+
+```json
+{"name": "vertex-maas-us-east5", "extends": "vertex-maas", "params": {"region": "us-east5"}}
+```
 
 ## Opening a profile
 

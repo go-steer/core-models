@@ -33,7 +33,7 @@ import (
 // Anything genai can express that Chat Completions cannot is refused
 // with an error naming it, never dropped: a silently missing tool or
 // schema is the defect class toolwire exists for.
-func (m *model) buildRequest(req *llm.Request, stream bool) (*chatRequest, error) {
+func (m *model) buildRequest(req *llm.Request, stream bool) (*chatRequest, map[string]any, error) {
 	out := &chatRequest{Model: m.id}
 	if stream {
 		out.Stream = true
@@ -49,19 +49,21 @@ func (m *model) buildRequest(req *llm.Request, stream bool) (*chatRequest, error
 	}
 	msgs, err := m.convertContents(req.Contents)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	out.Messages = append(out.Messages, msgs...)
 
-	if err := m.applyConfig(out, cfg); err != nil {
-		return nil, err
+	notes, err := m.applyConfig(out, cfg)
+	if err != nil {
+		return nil, nil, err
 	}
-	return out, nil
+	return out, notes, nil
 }
 
-func (m *model) applyConfig(out *chatRequest, cfg *genai.GenerateContentConfig) error {
+func (m *model) applyConfig(out *chatRequest, cfg *genai.GenerateContentConfig) (map[string]any, error) {
+	var notes map[string]any
 	if cfg.CandidateCount > 1 {
-		return fmt.Errorf("openai-chat: candidate_count %d: only one candidate is supported", cfg.CandidateCount)
+		return nil, fmt.Errorf("openai-chat: candidate_count %d: only one candidate is supported", cfg.CandidateCount)
 	}
 	if cfg.MaxOutputTokens > 0 {
 		out.MaxTokens = ptr(int64(cfg.MaxOutputTokens))
@@ -82,7 +84,7 @@ func (m *model) applyConfig(out *chatRequest, cfg *genai.GenerateContentConfig) 
 		rest := *t
 		rest.FunctionDeclarations = nil
 		if !reflect.ValueOf(rest).IsZero() {
-			return fmt.Errorf("openai-chat: tools[%d] carries a provider built-in (search, code execution, retrieval, …); this dialect sends function tools only", i)
+			return nil, fmt.Errorf("openai-chat: tools[%d] carries a provider built-in (search, code execution, retrieval, …); this dialect sends function tools only", i)
 		}
 		for _, d := range t.FunctionDeclarations {
 			params := parametersOf(d)
@@ -101,28 +103,42 @@ func (m *model) applyConfig(out *chatRequest, cfg *genai.GenerateContentConfig) 
 		case genai.FunctionCallingConfigModeNone:
 			out.ToolChoice = "none"
 		case genai.FunctionCallingConfigModeAny:
-			if len(fc.AllowedFunctionNames) == 1 {
+			switch {
+			case m.opts.NoForcedToolChoice:
+				// The model rejects a forced choice (gpt-oss on Vertex AI).
+				// "auto" with the same tools is the closest request it will
+				// take; the caller is told it was not forced.
+				out.ToolChoice = "auto"
+				notes = map[string]any{ToolChoiceKey: true}
+			case len(fc.AllowedFunctionNames) == 1:
 				var named namedToolChoice
 				named.Type = "function"
 				named.Function.Name = fc.AllowedFunctionNames[0]
 				out.ToolChoice = named
-			} else {
+			default:
 				out.ToolChoice = "required"
 			}
 		}
+	}
+	// With tools on the request and no choice expressed, say "auto"
+	// rather than leave it to the server: Qwen on Vertex AI documents
+	// worse tool calling when tool_choice is unset, and "auto" is what
+	// every other server assumes anyway.
+	if out.ToolChoice == nil && len(out.Tools) > 0 {
+		out.ToolChoice = "auto"
 	}
 
 	switch schema := responseSchemaOf(cfg); {
 	case schema != nil:
 		if !m.opts.ResponseSchema {
-			return errors.New("openai-chat: the request needs a response schema and this profile does not declare capabilities.response_schema; " +
+			return nil, errors.New("openai-chat: the request needs a response schema and this profile does not declare capabilities.response_schema; " +
 				"a server that accepts the field and ignores it returns prose where JSON was promised")
 		}
 		out.ResponseFormat = &responseFormat{Type: "json_schema", JSONSchema: &jsonSchema{Name: "response", Schema: schema}}
 	case cfg.ResponseMIMEType == "application/json":
 		out.ResponseFormat = &responseFormat{Type: "json_object"}
 	}
-	return nil
+	return notes, nil
 }
 
 func responseSchemaOf(cfg *genai.GenerateContentConfig) any {

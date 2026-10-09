@@ -2,5 +2,5 @@
   "profile": "ollama",
   "model": "qwen3:1.7b",
   "recorded": "2026-10-09",
-  "server": "Ollama 0.9.6, local, qwen3:1.7b (reasoning inline as <think> tags)"
+  "server": "Ollama 0.9.6, local (reasoning inline as <think> tags)"
 }

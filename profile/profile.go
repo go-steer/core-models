@@ -138,6 +138,8 @@ type Model struct {
 	ID            string `json:"id" yaml:"id"`
 	Tier          Tier   `json:"tier,omitempty" yaml:"tier,omitempty"`
 	ContextWindow int    `json:"context_window,omitempty" yaml:"context_window,omitempty"`
+	// Capabilities override the profile's for this model only.
+	Capabilities Capabilities `json:"capabilities,omitzero" yaml:"capabilities,omitempty"`
 }
 
 // Capabilities are declared, never probed. Nil means not declared,
@@ -155,6 +157,44 @@ type Capabilities struct {
 	ServerTools *bool `json:"server_tools,omitempty" yaml:"server_tools,omitempty"`
 	// Streaming: the server streams responses.
 	Streaming *bool `json:"streaming,omitempty" yaml:"streaming,omitempty"`
+	// ForcedToolChoice: the model accepts a forced tool call — "required",
+	// or one named tool. Unset means it does. Declared false (gpt-oss on
+	// Vertex AI, per Google's function-calling notes), a forced choice is
+	// sent as "auto" instead and the response is marked; the alternative
+	// is a request the server rejects or silently ignores.
+	ForcedToolChoice *bool `json:"forced_tool_choice,omitempty" yaml:"forced_tool_choice,omitempty"`
+}
+
+// overlay returns c with every capability o declares laid over it.
+func (c Capabilities) overlay(o Capabilities) Capabilities {
+	pick := func(base, over *bool) *bool {
+		if over != nil {
+			return over
+		}
+		return base
+	}
+	return Capabilities{
+		ResponseSchema:    pick(c.ResponseSchema, o.ResponseSchema),
+		ReasoningEcho:     pick(c.ReasoningEcho, o.ReasoningEcho),
+		ParallelToolCalls: pick(c.ParallelToolCalls, o.ParallelToolCalls),
+		ServerTools:       pick(c.ServerTools, o.ServerTools),
+		Streaming:         pick(c.Streaming, o.Streaming),
+		ForcedToolChoice:  pick(c.ForcedToolChoice, o.ForcedToolChoice),
+	}
+}
+
+// CapabilitiesFor is the profile's capabilities with the listed
+// model's own overrides laid over them. One profile serves many models,
+// and what a server honors can differ between two models it serves
+// (Kimi wants reasoning echoed, gpt-oss refuses a forced tool choice),
+// so a capability is declared per profile and refined per model.
+func (p Profile) CapabilitiesFor(id string) Capabilities {
+	for _, m := range p.Models {
+		if m.ID == id {
+			return p.Capabilities.overlay(m.Capabilities)
+		}
+	}
+	return p.Capabilities
 }
 
 // ReasoningFormat says where a server puts a model's reasoning.

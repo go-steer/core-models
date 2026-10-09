@@ -302,3 +302,33 @@ func TestDecodeJSON(t *testing.T) {
 		t.Error("trailing data decoded silently")
 	}
 }
+
+func TestCapabilitiesArePerModel(t *testing.T) {
+	maas, _ := profile.Builtin("vertex-maas")
+	if c := maas.CapabilitiesFor("openai/gpt-oss-20b-maas"); c.ForcedToolChoice == nil || *c.ForcedToolChoice {
+		t.Errorf("gpt-oss on vertex-maas: ForcedToolChoice = %v, want declared false (Google's function-calling notes)", c.ForcedToolChoice)
+	}
+	if c := maas.CapabilitiesFor("zai-org/glm-5.2-maas"); c.ForcedToolChoice != nil {
+		t.Errorf("an unlisted model inherited a per-model override: %v", *c.ForcedToolChoice)
+	}
+	if !maas.Serves("zai-org/glm-5.2-maas") {
+		t.Error("listing quirky models closed an open profile")
+	}
+
+	p := profile.Profile{
+		Name: "x", Extends: "vllm", BaseURL: "http://x/v1",
+		Capabilities: profile.Capabilities{ResponseSchema: new(true)},
+		Models:       []profile.Model{{ID: "kimi", Capabilities: profile.Capabilities{ReasoningEcho: new(true), ResponseSchema: new(false)}}},
+	}
+	e, err := profile.Expand(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	k := e.CapabilitiesFor("kimi")
+	if !profile.Has(k.ReasoningEcho) || profile.Has(k.ResponseSchema) || !profile.Has(k.ParallelToolCalls) {
+		t.Errorf("kimi = %+v: want its own echo and schema over the profile's, and the template's parallel calls", k)
+	}
+	if o := e.CapabilitiesFor("other"); !profile.Has(o.ResponseSchema) || profile.Has(o.ReasoningEcho) {
+		t.Errorf("other = %+v: want the profile's", o)
+	}
+}

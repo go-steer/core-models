@@ -1,0 +1,6 @@
+{
+  "profile": "vertex-maas",
+  "model": "qwen/qwen3-coder-480b-a35b-instruct-maas",
+  "recorded": "2026-10-09",
+  "server": "Vertex AI partner models, global (no reasoning; cached tokens reported)"
+}

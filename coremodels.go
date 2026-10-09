@@ -87,7 +87,14 @@ func Open(ctx context.Context, p profile.Profile, opts Options) (Provider, error
 		if err != nil {
 			return nil, fmt.Errorf("profile %q: %w", rp.Name, err)
 		}
-		return &provider{p: rp, model: c.Model}, nil
+		return &provider{p: rp, model: func(id string) llm.LLM {
+			caps := rp.CapabilitiesFor(id)
+			return c.ModelWith(id, openaichat.ModelOptions{
+				ResponseSchema:     new(profile.Has(caps.ResponseSchema)),
+				ReasoningEcho:      new(profile.Has(caps.ReasoningEcho)),
+				NoForcedToolChoice: new(caps.ForcedToolChoice != nil && !*caps.ForcedToolChoice),
+			})
+		}}, nil
 	case profile.OpenAIResponses, profile.Anthropic, profile.Gemini:
 		return nil, fmt.Errorf("profile %q: dialect %s is not built yet (docs/design.md §11: openai-responses is L2, anthropic L4, gemini L5)", rp.Name, rp.Dialect)
 	}

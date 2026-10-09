@@ -16,6 +16,7 @@ package coremodels_test
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -113,5 +114,49 @@ func TestOpenRefusesBeforeAnyRequest(t *testing.T) {
 				t.Errorf("Open = %v, want %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// The built-in vertex-maas profile carries gpt-oss's documented
+// limitation; Open must hand it to the adapter per model.
+func TestOpenAppliesPerModelCapabilities(t *testing.T) {
+	var choices []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var b map[string]any
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &b)
+		c, _ := json.Marshal(b["tool_choice"])
+		choices = append(choices, string(c))
+		_, _ = io.WriteString(w, `{"id":"c","model":"m","choices":[{"index":0,"message":{"content":"ok"},"finish_reason":"stop"}]}`)
+	}))
+	defer srv.Close()
+	p, err := coremodels.Open(context.Background(),
+		profile.Profile{Name: "maas", Extends: "vertex-maas", BaseURL: srv.URL + "/v1"},
+		opts(map[string]string{"GOOGLE_CLOUD_PROJECT": "acme"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := &llm.Request{
+		Contents: []*genai.Content{genai.NewContentFromText("report", genai.RoleUser)},
+		Config: &genai.GenerateContentConfig{
+			Tools: []*genai.Tool{{FunctionDeclarations: []*genai.FunctionDeclaration{{Name: "finish_task"}}}},
+			ToolConfig: &genai.ToolConfig{FunctionCallingConfig: &genai.FunctionCallingConfig{
+				Mode: genai.FunctionCallingConfigModeAny, AllowedFunctionNames: []string{"finish_task"},
+			}},
+		},
+	}
+	for _, id := range []string{"openai/gpt-oss-20b-maas", "zai-org/glm-5.2-maas"} {
+		m, err := p.Model(context.Background(), id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, err := range m.GenerateContent(context.Background(), req, false) {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if len(choices) != 2 || choices[0] != `"auto"` || !strings.Contains(choices[1], "finish_task") {
+		t.Errorf("tool_choice per model = %v, want gpt-oss downgraded to auto and GLM forced", choices)
 	}
 }

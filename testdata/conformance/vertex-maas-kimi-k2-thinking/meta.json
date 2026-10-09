@@ -1,0 +1,6 @@
+{
+  "profile": "vertex-maas",
+  "model": "moonshotai/kimi-k2-thinking-maas",
+  "recorded": "2026-10-09",
+  "server": "Vertex AI partner models, global (tool-call ids of the form functions.<name>:<n>)"
+}
