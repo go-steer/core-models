@@ -44,22 +44,12 @@ profiles are on the [profiles reference](/reference/profiles/).
 
 ## Tested against real servers
 
-Each recorded server below is replayed offline on every pull request. The
-adapter must send the same requests it sent when recorded, and produce the
-same answers:
-
-| Server | Model | What it showed |
-|---|---|---|
-| Ollama 0.9.6 (local) | `qwen3:1.7b` | Reasoning arrives inline as `<think>` tags. The `ollama` profile splits them out (`reasoning_format: think_tags`) |
-| Vertex AI (global) | `openai/gpt-oss-20b-maas` | Reasoning in a separate field; prompt-cache hits reported. Rejects forced tool choice (per Google), so the built-in profile downgrades it to `auto` |
-| Vertex AI (global) | `moonshotai/kimi-k2-thinking-maas` | Tool-call ids of the form `functions.<name>:<n>`. Completed the tool round trip without reasoning echoed back |
-| Vertex AI (global) | `qwen/qwen3-coder-480b-a35b-instruct-maas` | No reasoning output; small cached-token counts reported |
-| Vertex AI (global) | `zai-org/glm-5.2-maas` | Text and a tool call in the same turn |
-| Vertex AI (`us-east5`) | `meta/llama-4-maverick-17b-128e-instruct-maas` | 404 at `global`; needs a regional profile |
-
-The scenarios are a plain answer, a full tool-call round trip, and a
-streamed answer. Recording a new server is one command; see
-`conformance_test.go`.
+Six servers are recorded and replayed offline on every pull request. Five
+Vertex AI partner models have also been through a tool-calling parity run
+against Claude, on mast's 31-incident Kubernetes corpus. GLM 5.2 and Kimi
+K2 Thinking match Claude on intent coverage. Llama 4 Maverick is left out
+for tool use. The results, and what each test means, are on
+[Tested models](/reference/tested-models/).
 
 ## Self-hosted models
 

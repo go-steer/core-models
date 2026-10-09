@@ -75,8 +75,10 @@ profile.
 ### A regional Vertex AI profile
 
 Some partner models are served from one region only. Llama 4 Maverick, for
-example, returns 404 at `global` and answers at `us-east5`. Give it a
-profile of its own rather than moving every model's region:
+example, returns 404 at `global` and answers at `us-east5`. (It is also
+[unsupported for tool use](/reference/tested-models/#llama-4-maverick-unsupported-for-tool-use).)
+Give such a model a profile of its own rather than moving every model's
+region:
 
 ```json
 {"name": "vertex-maas-us-east5", "extends": "vertex-maas", "params": {"region": "us-east5"}}

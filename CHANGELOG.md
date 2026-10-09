@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Documentation
+
+- **New *Tested models* page.** It explains what the conformance and
+  tool-calling parity tests measure, and publishes the 2026-10-09 parity
+  run against Claude: GLM 5.2 and Kimi K2 Thinking at parity on intent, and
+  zero malformed calls in 858. Llama 4 Maverick on Vertex AI is documented
+  as unsupported for tool use, with the reason.
+
 ## v0.2.0 (2026-10-09)
 
 Fixes found by live runs against five Vertex AI partner models, before the
