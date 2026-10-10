@@ -31,7 +31,7 @@ import (
 
 	"github.com/go-steer/core-models/auth"
 	"github.com/go-steer/core-models/callctx"
-	"github.com/go-steer/core-models/gemini"
+	"github.com/go-steer/core-models/dialect/gemini"
 	"github.com/go-steer/core-models/llm"
 	"github.com/go-steer/core-models/retry"
 	"github.com/go-steer/core-models/toolwire"
@@ -415,5 +415,40 @@ func TestEveryToolArrivesWhole(t *testing.T) {
 	}
 	if problems := toolwire.Verify(entries, wire); len(problems) > 0 {
 		t.Errorf("tools did not arrive whole:\n%s", strings.Join(problems, "\n"))
+	}
+}
+
+// TestACallersPolicyStillGetsTheBare400Rule is fix 9: a Retry policy
+// supplied without AfterSuccess is merged with the rule, not used
+// instead of it.
+func TestACallersPolicyStillGetsTheBare400Rule(t *testing.T) {
+	served := callctx.NewPriorSuccess()
+	served.Mark()
+	p := retry.Default()
+	p.Jitter = 0
+	p.Sleep = func(ctx context.Context, _ time.Duration) error { return ctx.Err() }
+	s := &server{steps: []func(http.ResponseWriter, *http.Request){jsonReply(400, bare400), jsonReply(200, answer)}}
+	m := apiClient(t, s, gemini.Options{Retry: &p}).Model("gemini-3.6-flash")
+	if _, err := collect(t, m, callctx.WithPriorSuccess(context.Background(), served), userReq("why?"), false); err != nil || s.count() != 2 {
+		t.Errorf("err %v after %d requests; want the bare 400 retried under the caller's policy", err, s.count())
+	}
+	if p.AfterSuccess != nil {
+		t.Error("New modified the caller's policy")
+	}
+}
+
+// TestUnreportedBucketsStayNil: a usage block without the optional
+// buckets leaves them nil, never 0 (AGENTS.md rule 11).
+func TestUnreportedBucketsStayNil(t *testing.T) {
+	s := &server{steps: []func(http.ResponseWriter, *http.Request){jsonReply(200,
+		`{"candidates":[{"content":{"role":"model","parts":[{"text":"hi"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":3,"candidatesTokenCount":1,"totalTokenCount":4}}`)}}
+	m := apiClient(t, s, gemini.Options{}).Model("gemini-3.6-flash")
+	out, err := collect(t, m, context.Background(), userReq("hi"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, ok := usage.FromMetadata(out[0].CustomMetadata)
+	if !ok || d.CacheReadTokens != nil || d.ReasoningTokens != nil || d.ToolUseTokens != nil || d.CacheWriteTokens != nil {
+		t.Errorf("detail = %+v; want every unreported bucket nil", d)
 	}
 }

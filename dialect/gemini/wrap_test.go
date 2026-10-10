@@ -193,8 +193,7 @@ func TestASuppressedRequestGetsNeitherBuiltinsNorCache(t *testing.T) {
 	fake := &fakeLLM{}
 	m := &model{
 		inner: fake, builtins: searchAndURL(),
-		cacheName: func(context.Context) string { return "projects/p/locations/l/cachedContents/abc" },
-		cacheInit: func(context.Context, *genai.Content, []*genai.Tool) { inits++ },
+		cacheModel: "gemini-3.6-flash", cacheName: func(context.Context) string { return "projects/p/locations/l/cachedContents/abc" },
 	}
 	ctx := callctx.WithoutBuiltins(context.Background())
 	drain(t, m.GenerateContent(ctx, &llm.Request{}, false))
@@ -207,7 +206,7 @@ func TestASuppressedRequestGetsNeitherBuiltinsNorCache(t *testing.T) {
 func TestWithoutBuiltinsDropsTheInjection(t *testing.T) {
 	t.Parallel()
 	fake := &fakeLLM{}
-	m := &model{inner: fake, builtins: searchAndURL(), cacheName: func(context.Context) string { return "c" }}
+	m := &model{inner: fake, builtins: searchAndURL(), cacheModel: "gemini-3.6-flash", cacheName: func(context.Context) string { return "c" }}
 	stripped := m.WithoutBuiltins()
 	drain(t, stripped.GenerateContent(context.Background(), &llm.Request{}, false))
 	if c := fake.last().Config; countBuiltins(c.Tools) != 0 || c.CachedContent != "" {
@@ -230,7 +229,7 @@ func TestContextCacheHooksFire(t *testing.T) {
 	fake := &fakeLLM{}
 	m := &model{
 		inner: fake, builtins: searchAndURL(),
-		cacheInit: func(_ context.Context, sys *genai.Content, tools []*genai.Tool) {
+		cacheModel: "gemini-3.6-flash", cacheInit: func(_ context.Context, sys *genai.Content, tools []*genai.Tool) {
 			inits++
 			seenSys, seenTools = sys, tools
 		},
@@ -261,11 +260,10 @@ func TestContextCacheHooksFire(t *testing.T) {
 func TestCachedTurnStripsWhatVertexForbids(t *testing.T) {
 	t.Parallel()
 	fake := &fakeLLM{}
-	m := &model{inner: fake, builtins: searchAndURL(), cacheName: func(context.Context) string { return "c" }}
+	m := &model{inner: fake, builtins: searchAndURL(), cacheModel: "gemini-3.6-flash", cacheName: func(context.Context) string { return "c" }}
 	req := &llm.Request{Config: &genai.GenerateContentConfig{
 		SystemInstruction: &genai.Content{Parts: []*genai.Part{{Text: "sys"}}},
 		Tools:             []*genai.Tool{{}, {}},
-		ToolConfig:        &genai.ToolConfig{},
 	}}
 	drain(t, m.GenerateContent(context.Background(), req, false))
 	c := fake.last().Config

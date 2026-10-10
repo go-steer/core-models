@@ -664,3 +664,45 @@ func TestManager_RefreshLandingAfterEvictionIsDropped(t *testing.T) {
 		t.Errorf("ExpiresAt = %v, want zero (stale refresh result must be dropped)", snap.ExpiresAt)
 	}
 }
+
+// TestMarkEvictedNameSparesAReplacement: a verdict about one cache must
+// not discard the cache that replaced it, nor fire with no name.
+func TestMarkEvictedNameSparesAReplacement(t *testing.T) {
+	t.Parallel()
+	fake := &fakeCaches{nextCacheNameOnce: "projects/p/l/l/cc/current"}
+	m := NewManager(fake, "gemini-2.5-flash", Options{TTL: time.Hour})
+	if m.Model() != "gemini-2.5-flash" {
+		t.Errorf("Model = %q", m.Model())
+	}
+	m.Init(context.Background(), &genai.Content{Parts: []*genai.Part{{Text: "sys"}}}, nil)
+	waitFor(t, testWait, func() bool { return m.Name(context.Background()) != "" })
+
+	m.MarkEvictedName("projects/p/l/l/cc/old", "stale verdict")
+	m.MarkEvictedName("", "no name")
+	if got := m.Name(context.Background()); got != "projects/p/l/l/cc/current" {
+		t.Fatalf("Name = %q after verdicts about other caches; want the current one kept", got)
+	}
+	m.MarkEvictedName("projects/p/l/l/cc/current", "gone")
+	if got := m.Name(context.Background()); got != "" {
+		t.Errorf("Name = %q after the current cache was evicted", got)
+	}
+}
+
+// TestNameRefreshesOnTheInjectedClock: the refresh threshold is judged
+// against the manager's clock, so a test clock (and nothing else)
+// decides when a cache is near expiry.
+func TestNameRefreshesOnTheInjectedClock(t *testing.T) {
+	t.Parallel()
+	fake := &fakeCaches{nextCacheNameOnce: "projects/p/l/l/cc/x"}
+	m := NewManager(fake, "gemini-2.5-flash", Options{TTL: time.Hour, RefreshThreshold: 30 * time.Minute})
+	clock := &fakeClock{t: time.Now()}
+	m.now = clock.now
+	m.Init(context.Background(), &genai.Content{Parts: []*genai.Part{{Text: "sys"}}}, nil)
+	waitFor(t, testWait, func() bool { return m.Name(context.Background()) != "" })
+	if n := fake.updateCount.Load(); n != 0 {
+		t.Fatalf("refreshed %d times with an hour to go", n)
+	}
+	clock.advance(45 * time.Minute)
+	m.Name(context.Background())
+	waitFor(t, testWait, func() bool { return fake.updateCount.Load() == 1 })
+}

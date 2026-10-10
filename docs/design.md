@@ -471,14 +471,14 @@ model fails at startup (R6) in both products.
 | **L6** | Pricing merge ([§9](#9-pricing-l6)) | One catalog; mast's backend-shape tests and core-agent's 1-hour-TTL tests both pass against it |
 | **P1** | Bedrock Claude, Azure OpenAI, long-tail built-in profiles, NIM | Each has a tier map, catalog rows and a live smoke, or ships as an unvalidated template |
 
-**L5 status (2026-10-10).** The library half is done: package `gemini`
-(Developer API and Vertex AI), `gemini/vertexcache`, the `gemini` and
+**L5 status (2026-10-10).** The library half is done: package `dialect/gemini`
+(Developer API and Vertex AI), `dialect/gemini/vertexcache`, the `gemini` and
 `vertex` built-in profiles, and `retry.Policy.AfterSuccess` for core-agent's
 bare-400 rule. mast's #325 and core-agent's #902 eviction tests pass on the
 one verdict (`vertexcache.Gone`). Both products switching is still owed. What
 landed differently from the plan:
 - **The base model is ported, not wrapped.** Both products built on ADK's
-  `model/gemini`, which the core cannot import (D2). `gemini/model.go` is
+  `model/gemini`, which the core cannot import (D2). `dialect/gemini/model.go` is
   that model on `llm` types, with ADK v2.5's stream aggregator. A response
   with no candidates is an empty response rather than ADK's non-streaming
   `"empty response"` error, so the products' string match on that error, and

@@ -24,6 +24,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -568,7 +569,52 @@ func TestAfterSuccessRetriesOnceForAServedSession(t *testing.T) {
 			}
 		})
 	}
-	if len(seen) == 0 || seen[0] != bareBody {
-		t.Errorf("AfterSuccess saw %q, want the response body", seen)
+	if !slices.Contains(seen, bareBody) {
+		t.Errorf("AfterSuccess saw %q, want the response body among them", seen)
+	}
+}
+
+// TestAfterSuccessNeverReadsASuccessfulBody: on a served session with
+// AfterSuccess set, a 200 stream must reach the caller as soon as its
+// headers do, not after the transport has read ahead into it.
+func TestAfterSuccessNeverReadsASuccessfulBody(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(200)
+		_, _ = io.WriteString(w, "data: first\n\n")
+		w.(http.Flusher).Flush()
+		<-release // the rest of the stream waits on the caller
+		_, _ = io.WriteString(w, "data: second\n\n")
+	}))
+	defer srv.Close()
+	defer close(release)
+
+	served := callctx.NewPriorSuccess()
+	served.Mark()
+	consulted := false
+	var waits []time.Duration
+	p := policy(&waits)
+	p.AfterSuccess = func(int, []byte) bool { consulted = true; return false }
+
+	done := make(chan *http.Response, 1)
+	go func() {
+		resp, err := post(t, callctx.WithPriorSuccess(context.Background(), served), p.Transport(nil), srv.URL, "{}")
+		if err != nil {
+			t.Error(err)
+		}
+		done <- resp
+	}()
+	select {
+	case resp := <-done:
+		defer resp.Body.Close()
+		buf := make([]byte, len("data: first\n\n"))
+		if _, err := io.ReadFull(resp.Body, buf); err != nil || string(buf) != "data: first\n\n" {
+			t.Errorf("first chunk = %q, %v", buf, err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("RoundTrip did not return while the stream was still open: the transport read ahead into a 200")
+	}
+	if consulted {
+		t.Error("AfterSuccess was consulted for a 200")
 	}
 }

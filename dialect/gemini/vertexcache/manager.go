@@ -332,7 +332,7 @@ func (m *Manager) Name(ctx context.Context) string {
 	}
 	name := m.cacheName
 	needsRefresh := !m.expiresAt.IsZero() &&
-		time.Until(m.expiresAt) < m.opts.refreshThreshold() &&
+		m.expiresAt.Sub(m.clock()) < m.opts.refreshThreshold() &&
 		!m.refreshing
 	m.mu.RUnlock()
 
@@ -341,7 +341,7 @@ func (m *Manager) Name(ctx context.Context) string {
 		// Re-check under the write lock — another reader may have
 		// already scheduled the refresh between our RUnlock and Lock.
 		if m.state == stateActive && !m.refreshing &&
-			time.Until(m.expiresAt) < m.opts.refreshThreshold() {
+			m.expiresAt.Sub(m.clock()) < m.opts.refreshThreshold() {
 			m.refreshing = true
 			// Same detach as Init: the refresh outlives the request
 			// that happened to trigger it.
@@ -420,16 +420,30 @@ func (m *Manager) doRefresh(ctx context.Context, name string) {
 // that lands after MarkEvicted just sees state != active and no-ops.
 func (m *Manager) MarkEvicted(reason string) { m.markEvicted("", reason) }
 
+// MarkEvictedName is MarkEvicted for one named cache: it resets only
+// while name is still the active cache. The gemini adapter calls this
+// form, because between stamping a request and hearing that its cache
+// is gone a fresh cache may have replaced it, and a verdict about the
+// old one must not discard the new one.
+func (m *Manager) MarkEvictedName(name, reason string) {
+	if name == "" {
+		return
+	}
+	m.markEvicted(name, reason)
+}
+
+// Model is the model this manager's cache is for. A cache serves only
+// the model it was created for.
+func (m *Manager) Model() string { return m.model }
+
 // markEvicted is MarkEvicted with an optional staleness guard: a
 // non-empty want only evicts while that cache is still the active one.
 //
 // doRefresh needs the guard for the reason the success path below
 // already states — MarkEvicted or Delete may have landed while the
 // Update RPC was in flight, and a verdict about the old cache must not
-// be applied to the one that replaced it. The exported form has no
-// name to check against: its caller saw the eviction on a
-// GenerateContent that was stamped with whatever Name() returned, and
-// by the time the error arrives that is the cache it is talking about.
+// be applied to the one that replaced it. MarkEvictedName exposes the
+// guard; MarkEvicted is the unguarded form for a caller with no name.
 func (m *Manager) markEvicted(want, reason string) {
 	m.mu.Lock()
 	// Only meaningful when we currently think we hold a cache.
@@ -496,7 +510,7 @@ func (m *Manager) Snapshot() Status {
 		ExpiresAt: m.expiresAt,
 	}
 	if !m.expiresAt.IsZero() {
-		s.ExpiresIn = time.Until(m.expiresAt)
+		s.ExpiresIn = m.expiresAt.Sub(m.clock())
 	}
 	return s
 }

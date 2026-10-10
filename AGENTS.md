@@ -195,6 +195,7 @@ auth/                credential resolution: api_key, bearer, google_adc, none
 profile/             provider profiles: schema, built-ins, extends, Resolve
 toolwire/            the shared tool-schema invariant every adapter is held to
 dialect/openaichat/  OpenAI Chat Completions (Vertex MaaS, vLLM, SGLang, Ollama, …)
+dialect/gemini/      Gemini: Developer API and Vertex AI; vertexcache/ for explicit caches
 testdata/conformance/  recorded exchanges from real servers, replayed in presubmit
 adkv1/  (module)     adapter to google.golang.org/adk v1  — core-agent
 adkv2/  (module)     adapter to google.golang.org/adk/v2  — mast

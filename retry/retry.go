@@ -116,8 +116,9 @@ type Policy struct {
 	// a malformed request as a transient fault, but on a session whose
 	// previous call under the same config succeeded it has been
 	// transient every time it was recorded (core-agent #898, #1247).
-	// body is the response body, at most 64 KiB, and stays readable by
-	// the caller when the response is handed back. Nil disables it.
+	// It is consulted only for a 4xx or 5xx; body is that response's
+	// body, at most 64 KiB, and stays readable by the caller when the
+	// response is handed back. Nil disables it.
 	AfterSuccess func(status int, body []byte) bool
 
 	// Sleep waits for d or until ctx is done. Nil means a real timer;
@@ -296,15 +297,15 @@ func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 }
 
-// attempt sends req once, abandoning it if no response headers arrive
-// within HeaderTimeout. The deadline covers the wait for headers only;
-// once they are in, the body reads under the caller's context alone.
 // afterSuccess reports whether Policy.AfterSuccess licenses one retry
 // of resp. It reads resp's body to decide and puts it back, so a
 // response that is not retried reaches the caller intact.
 func (t *transport) afterSuccess(ctx context.Context, resp *http.Response, err error) bool {
-	if t.p.AfterSuccess == nil || err != nil || resp == nil || ctx.Err() != nil ||
-		!callctx.PriorCallSucceeded(ctx) {
+	// The status first, and the body only for an error: a success is
+	// never AfterSuccess's business, and reading ahead into a 200 would
+	// buffer a stream before the caller saw its first token.
+	if t.p.AfterSuccess == nil || err != nil || resp == nil || resp.StatusCode < http.StatusBadRequest ||
+		ctx.Err() != nil || !callctx.PriorCallSucceeded(ctx) {
 		return false
 	}
 	body, rerr := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
@@ -319,6 +320,9 @@ func (t *transport) afterSuccess(ctx context.Context, resp *http.Response, err e
 	return t.p.AfterSuccess(resp.StatusCode, body)
 }
 
+// attempt sends req once, abandoning it if no response headers arrive
+// within HeaderTimeout. The deadline covers the wait for headers only;
+// once they are in, the body reads under the caller's context alone.
 func (t *transport) attempt(req *http.Request) (*http.Response, error) {
 	if t.p.HeaderTimeout <= 0 {
 		return t.base.RoundTrip(req)

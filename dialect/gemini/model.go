@@ -205,27 +205,42 @@ func (m *baseModel) convert(res *genai.GenerateContentResponse) *llm.Response {
 
 // describe attaches the usage sidecar to a response that carries usage.
 //
-// Gemini's buckets all have a genai field, so nothing here is needed to
-// price a call. It is here for what mast #352 is about: with every
-// adapter stating what it measured, an absent bucket means the provider
-// did not report it. CacheWriteTokens stays nil on every Gemini
-// response for that reason — explicit context caches bill storage per
-// hour, so there is no written-token count, and nil says so where a
-// zero would claim a cache was warmed for free.
+// Not reported is not zero (AGENTS.md rule 11), and genai cannot tell
+// the two apart: its counts are plain int32s, decoded with omitempty,
+// and the raw body is gone by the time a response reaches here. The
+// three buckets the sidecar takes from Gemini — cachedContentTokenCount,
+// thoughtsTokenCount, toolUsePromptTokenCount — are optional in the API
+// and omitted when they do not apply (no cache hit, no thinking, no
+// tool-use prompt), so a 0 is read as "not reported" and left nil.
+// The cost is that a reported zero also reads as nil, which prices the
+// same and claims nothing.
+//
+// CacheWriteTokens stays nil on every Gemini response: explicit context
+// caches bill storage per hour, so there is no written-token count, and
+// nil says so where a zero would claim a cache was warmed for free.
 func (m *baseModel) describe(r *llm.Response, responseID string) {
 	u := r.UsageMetadata
 	if u == nil {
 		return
 	}
 	usage.Attach(r, &usage.Detail{
-		CacheReadTokens:   usage.Int64(int64(u.CachedContentTokenCount)),
-		ReasoningTokens:   usage.Int64(int64(u.ThoughtsTokenCount)),
-		ToolUseTokens:     usage.Int64(int64(u.ToolUsePromptTokenCount)),
+		CacheReadTokens:   reported(u.CachedContentTokenCount),
+		ReasoningTokens:   reported(u.ThoughtsTokenCount),
+		ToolUseTokens:     reported(u.ToolUsePromptTokenCount),
 		ServedModel:       r.ModelVersion,
 		ProviderRequestID: responseID,
 		Backend:           m.backendName,
 		Region:            m.region,
 	})
+}
+
+// reported is n as a count, or nil for the 0 an omitted field decodes
+// to.
+func reported(n int32) *int64 {
+	if n == 0 {
+		return nil
+	}
+	return usage.Int64(int64(n))
 }
 
 func stampRetry(r *llm.Response, rec *retry.Record) {

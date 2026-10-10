@@ -29,7 +29,7 @@ import (
 	"google.golang.org/genai"
 
 	"github.com/go-steer/core-models/callctx"
-	"github.com/go-steer/core-models/gemini/vertexcache"
+	"github.com/go-steer/core-models/dialect/gemini/vertexcache"
 	"github.com/go-steer/core-models/llm"
 )
 
@@ -44,10 +44,11 @@ type ContextCacheInitFn func(ctx context.Context, systemInstruction *genai.Conte
 type ContextCacheNameFn func(ctx context.Context) string
 
 // ContextCacheInvalidateFn is told that Vertex rejected the stamped
-// cache reference because the cache is gone (vertexcache.Gone), so the
-// next call runs uncached and a later one re-creates it. The reason
-// quotes the error.
-type ContextCacheInvalidateFn func(reason string)
+// cache reference name because the cache is gone (vertexcache.Gone), so
+// later calls run uncached until a fresh cache exists. It should forget
+// name only if name is still current — vertexcache.Manager's
+// MarkEvictedName does exactly that. The reason quotes the error.
+type ContextCacheInvalidateFn func(name, reason string)
 
 // ErrEmptyResponse is returned when the model answered with no usable
 // content, no finish reason other than STOP and no error, twice in a
@@ -65,6 +66,9 @@ type model struct {
 	directAPI bool
 	logf      func(format string, args ...any)
 
+	// The cache hooks serve one model, cacheModel: a Vertex cache is
+	// created for a model and serves only that one.
+	cacheModel      string
 	cacheInit       ContextCacheInitFn
 	cacheName       ContextCacheNameFn
 	cacheInvalidate ContextCacheInvalidateFn
@@ -99,145 +103,130 @@ func (m *model) notef(format string, args ...any) {
 }
 
 func (m *model) GenerateContent(ctx context.Context, req *llm.Request, stream bool) iter.Seq2[*llm.Response, error] {
-	// A copy, because the stamping and appending below must not reach
-	// the caller's request — a retry or a reused request would carry
-	// them twice.
-	r := llm.Request{}
+	// Copies throughout: nothing below may reach the caller's request,
+	// or a retry or a reused request would carry it twice.
+	base := llm.Request{}
 	if req != nil {
-		r = *req
+		base = *req
 	}
 	cfg := genai.GenerateContentConfig{}
-	if r.Config != nil {
-		cfg = *r.Config
+	if base.Config != nil {
+		cfg = *base.Config
 	}
-	r.Config = &cfg
+	base.Config = &cfg
 
 	// One-shot callers (core-agent's side question) opt out of both
-	// built-ins and the cache for this request. Read once, so a request
-	// cannot come out half-suppressed.
+	// built-ins and the cache. Read once, so a request cannot come out
+	// half-suppressed.
 	suppressed := callctx.BuiltinsSuppressed(ctx)
+	uncached := m.uncached(base, suppressed)
+	useCache := m.cacheable(ctx, &base, suppressed)
 
-	// The cache reference goes first. Vertex rejects a request that
-	// sets CachedContent together with tools, a system instruction or a
-	// tool config, so a cached turn strips them — the cache holds them
-	// — and skips the built-ins, which were captured into the cache.
-	// The stripped fields are kept so the eviction retry can restore
-	// them; without that the uncached retry would reach the model with
-	// no system prompt and no tools.
-	cached := false
-	var saved struct {
-		system     *genai.Content
-		tools      []*genai.Tool
-		toolConfig *genai.ToolConfig
-	}
-	if !suppressed && m.cacheName != nil {
-		if name := m.cacheName(ctx); name != "" {
-			saved.system, saved.tools, saved.toolConfig = cfg.SystemInstruction, cfg.Tools, cfg.ToolConfig
-			cfg.CachedContent = name
-			cfg.SystemInstruction, cfg.Tools, cfg.ToolConfig = nil, nil, nil
-			cached = true
-		}
-	}
-	if !suppressed && !cached && len(m.builtins) > 0 && m.builtinsCompatible(&r) {
-		cfg.Tools = append(slices.Clip(cfg.Tools), m.builtins...)
-		// Gemini 3+ on the Developer API rejects built-ins mixed with
-		// function calling unless this is set ("Please enable
-		// tool_config.include_server_side_tool_invocations…"). Vertex AI
-		// rejects the parameter itself and allows the mix anyway, so the
-		// backend decides — no caller can forget it (mast #505).
-		if m.directAPI {
-			tc := genai.ToolConfig{}
-			if cfg.ToolConfig != nil {
-				tc = *cfg.ToolConfig
-			}
-			tc.IncludeServerSideToolInvocations = new(true)
-			cfg.ToolConfig = &tc
-		}
-	}
-	// Seed the cache after the built-ins are in, so cached and uncached
-	// turns offer the same tools. A suppressed request carries no
-	// system instruction or tools, and seeding from it would build a
-	// cache that later turns run against with neither.
-	if !suppressed && !cached && m.cacheInit != nil {
-		m.cacheInit(ctx, cfg.SystemInstruction, cfg.Tools)
-	}
-
-	// Composed innermost first: the base call; the eviction retry (a
-	// no-op on uncached turns); the empty-tail detector; the
-	// retry-once on an empty answer. The eviction retry sits inside the
-	// empty retry so a turn can be rescued from both, which are
-	// unrelated — one is server state, the other a silent STOP. A
-	// transient HTTP failure never reaches here: package retry handles
-	// it below the base model.
+	// Composed innermost first: the call, cached or not; the empty-tail
+	// detector; the retry-once on an empty answer. The cache decision
+	// is taken inside the factory, so an attempt after an eviction asks
+	// the manager again and runs uncached rather than re-stamping the
+	// name it just learned is dead. A transient HTTP failure never
+	// reaches here: package retry handles it below the base model.
 	return retryOnceOnEmpty(m.notef, func() iter.Seq2[*llm.Response, error] {
-		return emptyTail(m.evictionRetry(ctx, &r, stream, cached, saved.system, saved.tools, saved.toolConfig))
+		name := ""
+		if useCache && m.cacheName != nil {
+			name = m.cacheName(ctx)
+		}
+		if name == "" {
+			// Seed from the request as it is sent uncached, built-ins
+			// in, so cached and uncached turns offer the same tools.
+			if useCache && m.cacheInit != nil {
+				m.cacheInit(ctx, uncached.Config.SystemInstruction, uncached.Config.Tools)
+			}
+			return emptyTail(m.inner.GenerateContent(ctx, uncached, stream))
+		}
+		return emptyTail(m.cached(ctx, uncached, name, stream))
 	})
 }
 
-// evictionRetry re-sends a cached turn once, uncached, when Vertex
-// rejects the cache reference because the cache is gone. It tells the
-// manager first, so later turns stop stamping the dead name and a
-// fresh cache gets created; restores the fields the cached turn
-// stripped; and drops whatever the failed attempt yielded, which the
-// retry supersedes. One retry, and it is uncached, so it cannot fail
-// the same way twice.
-func (m *model) evictionRetry(ctx context.Context, req *llm.Request, stream, cached bool,
-	system *genai.Content, tools []*genai.Tool, toolConfig *genai.ToolConfig,
-) iter.Seq2[*llm.Response, error] {
-	first := m.inner.GenerateContent(ctx, req, stream)
-	if !cached {
-		return first
+// uncached returns req as it goes out with no cache: the built-ins
+// appended where the model allows them, and the server-side flag the
+// Developer API needs beside them.
+func (m *model) uncached(req llm.Request, suppressed bool) *llm.Request {
+	cfg := *req.Config
+	req.Config = &cfg
+	if suppressed || len(m.builtins) == 0 || !m.builtinsCompatible(&req) {
+		return &req
 	}
+	cfg.Tools = append(slices.Clip(cfg.Tools), m.builtins...)
+	// Gemini 3+ on the Developer API rejects built-ins mixed with
+	// function calling unless this is set ("Please enable
+	// tool_config.include_server_side_tool_invocations…"). Vertex AI
+	// rejects the parameter itself and allows the mix anyway, so the
+	// backend decides — no caller can forget it (mast #505).
+	if m.directAPI {
+		tc := genai.ToolConfig{}
+		if cfg.ToolConfig != nil {
+			tc = *cfg.ToolConfig
+		}
+		tc.IncludeServerSideToolInvocations = new(true)
+		cfg.ToolConfig = &tc
+	}
+	return &req
+}
+
+// cacheable reports whether req may use the context cache, as a stamp
+// or as the request it is seeded from. Not when:
+//   - the request opted out of built-ins or of prompt caching, or is a
+//     side call: its system instruction and tools are not the agent's,
+//     and stamping would replace them with the agent's;
+//   - it is for another model than the cache's;
+//   - it carries a tool config. Vertex refuses tool_config beside
+//     cached_content ("Tool config, tools and system instruction should
+//     not be set in the request when using cached content"), and the
+//     cache holds none, so stripping it would drop a forced function
+//     call or a calling mode on the floor. Such a request runs uncached.
+func (m *model) cacheable(ctx context.Context, req *llm.Request, suppressed bool) bool {
+	if m.cacheName == nil && m.cacheInit == nil {
+		return false
+	}
+	if suppressed || callctx.PromptCacheSuppressed(ctx) || callctx.SideCallName(ctx) != "" {
+		return false
+	}
+	model := req.Model
+	if model == "" {
+		model = m.inner.Name()
+	}
+	return model == m.cacheModel && req.Config.ToolConfig == nil
+}
+
+// cached sends uncached's turn against the cache name: the cache holds
+// the system instruction and tools, and Vertex refuses a request that
+// repeats them, so they are left off. If Vertex says the cache is gone
+// (vertexcache.Gone), the manager is told and the turn is re-sent once
+// exactly as an uncached turn would be — built-ins and all — with
+// whatever the failed attempt yielded dropped.
+func (m *model) cached(ctx context.Context, uncached *llm.Request, name string, stream bool) iter.Seq2[*llm.Response, error] {
+	cfg := *uncached.Config
+	cfg.CachedContent = name
+	cfg.SystemInstruction, cfg.Tools, cfg.ToolConfig = nil, nil, nil
+	req := *uncached
+	req.Config = &cfg
 	return func(yield func(*llm.Response, error) bool) {
-		type item struct {
-			resp *llm.Response
-			err  error
-		}
-		var buf []item
-		flushed := false
-		for resp, err := range first {
-			if flushed {
-				if !yield(resp, err) {
-					return
-				}
-				continue
+		h := hold(m.inner.GenerateContent(ctx, &req, stream), yield, vertexcache.Gone)
+		switch {
+		case h.stopped || h.passed:
+			return
+		case h.intercepted != nil:
+			if m.cacheInvalidate != nil {
+				// Quote the error rather than name a status: this fires
+				// on an expiry 400 as readily as a 404 (core-agent #902).
+				m.cacheInvalidate(name, "GenerateContent rejected the cached content reference: "+h.intercepted.Error())
 			}
-			if vertexcache.Gone(err) {
-				if m.cacheInvalidate != nil {
-					// Quote the error rather than name a status: this
-					// fires on an expiry 400 as readily as a 404
-					// (core-agent #902).
-					m.cacheInvalidate("GenerateContent rejected the cached content reference: " + err.Error())
-				}
-				m.notef("cached content unusable server-side (%v), retrying uncached", err)
-				cfg := *req.Config
-				cfg.CachedContent = ""
-				cfg.SystemInstruction, cfg.Tools, cfg.ToolConfig = system, tools, toolConfig
-				retry := *req
-				retry.Config = &cfg
-				for r2, e2 := range m.inner.GenerateContent(ctx, &retry, stream) {
-					if !yield(r2, e2) {
-						return
-					}
-				}
-				return
-			}
-			buf = append(buf, item{resp, err})
-			if err != nil || (resp != nil && resp.Content != nil && len(resp.Content.Parts) > 0) {
-				for _, b := range buf {
-					if !yield(b.resp, b.err) {
-						return
-					}
-				}
-				buf, flushed = nil, true
-			}
-		}
-		if !flushed {
-			for _, b := range buf {
-				if !yield(b.resp, b.err) {
+			m.notef("cached content unusable server-side (%v), retrying uncached", h.intercepted)
+			for r, err := range m.inner.GenerateContent(ctx, uncached, stream) {
+				if !yield(r, err) {
 					return
 				}
 			}
+		default:
+			h.flush(yield)
 		}
 	}
 }
@@ -302,68 +291,95 @@ func geminiMajorVersion(id string) int {
 	return n
 }
 
-// retryOnceOnEmpty runs fn, and runs it once more if the whole
-// iteration ended in ErrEmptyResponse without anything usable. Chunks
-// are held until the first usable one, then passed through; an empty
-// attempt's chunks are discarded, so the caller never records the
-// empty turn. Two attempts at most.
+// retryOnceOnEmpty runs fn, and runs it once more if the attempt ended
+// in ErrEmptyResponse with nothing usable. An empty attempt's responses
+// are dropped, so the caller never records the empty turn. Two
+// attempts at most.
 func retryOnceOnEmpty(notef func(string, ...any), fn func() iter.Seq2[*llm.Response, error]) iter.Seq2[*llm.Response, error] {
 	const attempts = 2
+	isEmpty := func(err error) bool { return errors.Is(err, ErrEmptyResponse) }
 	return func(yield func(*llm.Response, error) bool) {
-		type item struct {
-			resp *llm.Response
-			err  error
-		}
 		for attempt := 1; attempt <= attempts; attempt++ {
-			var buf []item
-			flushed, empty := false, false
-			for resp, err := range fn() {
-				if flushed {
-					if !yield(resp, err) {
-						return
-					}
-					continue
-				}
-				if errors.Is(err, ErrEmptyResponse) {
-					empty = true
-					continue
-				}
-				if err == nil && usable(resp) {
-					for _, b := range buf {
-						if !yield(b.resp, b.err) {
-							return
-						}
-					}
-					buf, flushed = nil, true
-					if !yield(resp, err) {
-						return
-					}
-					continue
-				}
-				buf = append(buf, item{resp, err})
-			}
-			if flushed {
+			h := hold(fn(), yield, isEmpty)
+			switch {
+			case h.stopped:
+				return
+			case h.passed:
 				if attempt > 1 {
 					notef("empty response recovered on retry (attempt %d/%d)", attempt, attempts)
 				}
 				return
-			}
-			if empty && attempt < attempts {
+			case h.intercepted != nil && attempt < attempts:
 				notef("empty response detected — retrying (attempt %d/%d)", attempt+1, attempts)
 				continue
 			}
-			for _, b := range buf {
-				if !yield(b.resp, b.err) {
-					return
-				}
+			if !h.flush(yield) {
+				return
 			}
-			if empty {
+			if h.intercepted != nil {
 				notef("empty response persisted after retry")
 				yield(nil, ErrEmptyResponse)
 			}
 			return
 		}
 	}
+}
+
+// held is what hold saw of a sequence.
+type held struct {
+	passed      bool  // a usable response arrived; everything since went straight through
+	stopped     bool  // the consumer stopped reading
+	intercepted error // the error that ended the sequence early, if any
+	items       []heldItem
+}
+
+type heldItem struct {
+	resp *llm.Response
+	err  error
+}
+
+// flush yields what was held, reporting false if the consumer stopped.
+func (h *held) flush(yield func(*llm.Response, error) bool) bool {
+	for _, it := range h.items {
+		if !yield(it.resp, it.err) {
+			return false
+		}
+	}
+	return true
+}
+
+// hold is the buffer-until-usable loop both recoveries share: it holds
+// seq's responses and errors until the first usable response (see
+// usable), then passes that and everything after straight to yield.
+// Before that point an error intercept claims ends the sequence and is
+// returned, with the held items left for the caller to drop; any other
+// error is held like a response. Holding is what lets a retry
+// supersede an attempt's partial output instead of appending to it.
+func hold(seq iter.Seq2[*llm.Response, error], yield func(*llm.Response, error) bool, intercept func(error) bool) held {
+	var h held
+	for resp, err := range seq {
+		if h.passed {
+			if !yield(resp, err) {
+				h.stopped = true
+				return h
+			}
+			continue
+		}
+		if err != nil && intercept(err) {
+			h.intercepted = err
+			return h
+		}
+		if err == nil && usable(resp) {
+			if !h.flush(yield) || !yield(resp, nil) {
+				h.stopped = true
+				return h
+			}
+			h.items, h.passed = nil, true
+			continue
+		}
+		h.items = append(h.items, heldItem{resp, err})
+	}
+	return h
 }
 
 // emptyTail passes inner through and, when it ended with nothing

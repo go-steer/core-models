@@ -21,7 +21,7 @@ import (
 	"google.golang.org/genai"
 
 	"github.com/go-steer/core-models/auth"
-	"github.com/go-steer/core-models/gemini"
+	"github.com/go-steer/core-models/dialect/gemini"
 	"github.com/go-steer/core-models/llm"
 	"github.com/go-steer/core-models/profile"
 )

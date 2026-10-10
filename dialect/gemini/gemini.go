@@ -79,9 +79,10 @@ type Options struct {
 	// the retry and auth layers wrap it. Nil means
 	// http.DefaultTransport.
 	HTTPClient *http.Client
-	// Retry is the HTTP-layer retry policy. Nil means retry.Default()
-	// with the bare-400 rule (see IsBareInvalidArgumentBody) as its
-	// AfterSuccess; a policy supplied here is used as given.
+	// Retry is the HTTP-layer retry policy. Nil means retry.Default().
+	// Either way, a nil AfterSuccess gets the bare-400 rule
+	// (IsBareInvalidArgumentBody); to turn it off, supply an
+	// AfterSuccess that returns false.
 	Retry *retry.Policy
 
 	// BackendName labels usage.Detail.Backend, the key products price
@@ -95,11 +96,17 @@ type Options struct {
 	// vendor it resolved to (mast #324).
 	BuiltinTools BuiltinTools
 
-	// ContextCacheInit, ContextCacheName and ContextCacheInvalidate wire
-	// Vertex explicit context caching — see vertexcache.Manager, whose
-	// Init, Name and MarkEvicted they usually are. Ignored on the
-	// Developer API, which rejects the cache reference on some model
-	// families.
+	// ContextCacheModel, ContextCacheInit, ContextCacheName and
+	// ContextCacheInvalidate wire Vertex explicit context caching — see
+	// vertexcache.Manager, whose Model, Init, Name and MarkEvictedName
+	// they usually are. A cache serves the one model it was created
+	// for, so the hooks apply only to requests for ContextCacheModel,
+	// which is required when any hook is set. They are skipped, too,
+	// for a side call, a request that opted out of built-ins or prompt
+	// caching, and one carrying a tool config (see cacheable). Ignored
+	// on the Developer API, which rejects the cache reference on some
+	// model families.
+	ContextCacheModel      string
 	ContextCacheInit       ContextCacheInitFn
 	ContextCacheName       ContextCacheNameFn
 	ContextCacheInvalidate ContextCacheInvalidateFn
@@ -146,6 +153,10 @@ func New(ctx context.Context, opts Options) (*Client, error) {
 		return nil, fmt.Errorf("gemini: backend %v is not the Developer API or Vertex AI", opts.Backend)
 	}
 
+	if (opts.ContextCacheInit != nil || opts.ContextCacheName != nil || opts.ContextCacheInvalidate != nil) && opts.ContextCacheModel == "" {
+		return nil, errors.New("gemini: context-cache hooks need ContextCacheModel, the model the cache was created for")
+	}
+
 	base := opts.HTTPClient
 	if base == nil {
 		base = &http.Client{}
@@ -161,9 +172,11 @@ func New(ctx context.Context, opts Options) (*Client, error) {
 		rt = opts.Credential.BearerTransport(rt)
 	}
 	policy := retry.Default()
-	policy.AfterSuccess = IsBareInvalidArgumentBody
 	if opts.Retry != nil {
 		policy = *opts.Retry
+	}
+	if policy.AfterSuccess == nil {
+		policy.AfterSuccess = IsBareInvalidArgumentBody
 	}
 	hc := *base
 	hc.Transport = policy.Transport(rt)
@@ -206,6 +219,7 @@ func (c *Client) Model(id string) llm.LLM {
 		logf:      c.opts.Logf,
 	}
 	if isVertex {
+		w.cacheModel = c.opts.ContextCacheModel
 		w.cacheInit = c.opts.ContextCacheInit
 		w.cacheName = c.opts.ContextCacheName
 		w.cacheInvalidate = c.opts.ContextCacheInvalidate

@@ -50,7 +50,6 @@ func cachedRequest() *llm.Request {
 	return &llm.Request{Config: &genai.GenerateContentConfig{
 		SystemInstruction: &genai.Content{Parts: []*genai.Part{{Text: "system prompt"}}},
 		Tools:             []*genai.Tool{{FunctionDeclarations: []*genai.FunctionDeclaration{{Name: "my_func"}}}},
-		ToolConfig:        &genai.ToolConfig{},
 	}}
 }
 
@@ -65,9 +64,9 @@ func TestEvictionRetriesUncachedAndInvalidates(t *testing.T) {
 			fake := &fakeLLM{scripts: [][]fakeEvent{{{err: gone}}, {{resp: text("recovered")}}}}
 			var reasons []string
 			m := &model{
-				inner:           fake,
-				cacheName:       func(context.Context) string { return "projects/p/locations/l/cachedContents/dead" },
-				cacheInvalidate: func(r string) { reasons = append(reasons, r) },
+				inner:      fake,
+				cacheModel: "gemini-3.6-flash", cacheName: func(context.Context) string { return "projects/p/locations/l/cachedContents/dead" },
+				cacheInvalidate: func(_, r string) { reasons = append(reasons, r) },
 			}
 			out, err := drain(t, m.GenerateContent(context.Background(), cachedRequest(), false))
 			if err != nil || len(out) != 1 || out[0].Content.Parts[0].Text != "recovered" {
@@ -80,9 +79,9 @@ func TestEvictionRetriesUncachedAndInvalidates(t *testing.T) {
 				t.Fatalf("inner calls = %d, want 2", fake.calls())
 			}
 			retry := fake.last().Config
-			if retry.CachedContent != "" || retry.SystemInstruction == nil || len(retry.Tools) != 1 || retry.ToolConfig == nil {
-				t.Errorf("retry sent cache %q, sys %v, %d tools, tool config %v; want uncached with everything restored",
-					retry.CachedContent, retry.SystemInstruction, len(retry.Tools), retry.ToolConfig)
+			if retry.CachedContent != "" || retry.SystemInstruction == nil || len(retry.Tools) != 1 {
+				t.Errorf("retry sent cache %q, sys %v, %d tools; want uncached with everything restored",
+					retry.CachedContent, retry.SystemInstruction, len(retry.Tools))
 			}
 		})
 	}
@@ -93,7 +92,7 @@ func TestEvictionLeavesOtherErrorsAndUncachedTurnsAlone(t *testing.T) {
 	notCache := errors.New(notFoundText)
 	fake := &fakeLLM{scripts: [][]fakeEvent{{{err: notCache}}}}
 	invalidated := 0
-	m := &model{inner: fake, cacheName: func(context.Context) string { return "c" }, cacheInvalidate: func(string) { invalidated++ }}
+	m := &model{inner: fake, cacheModel: "gemini-3.6-flash", cacheName: func(context.Context) string { return "c" }, cacheInvalidate: func(string, string) { invalidated++ }}
 	if _, err := drain(t, m.GenerateContent(context.Background(), cachedRequest(), false)); !errors.Is(err, notCache) {
 		t.Errorf("err = %v, want the model-not-found error untouched", err)
 	}
@@ -104,7 +103,7 @@ func TestEvictionLeavesOtherErrorsAndUncachedTurnsAlone(t *testing.T) {
 	// An uncached turn has no cache to lose: a gone-shaped error passes
 	// through.
 	fake = &fakeLLM{scripts: [][]fakeEvent{{{err: expiredErr}}}}
-	m = &model{inner: fake, cacheInvalidate: func(string) { invalidated++ }}
+	m = &model{inner: fake, cacheInvalidate: func(string, string) { invalidated++ }}
 	if _, err := drain(t, m.GenerateContent(context.Background(), cachedRequest(), false)); !errors.Is(err, expiredErr) || fake.calls() != 1 {
 		t.Errorf("uncached turn: err %v over %d calls; want the error, one call", err, fake.calls())
 	}
@@ -113,7 +112,7 @@ func TestEvictionLeavesOtherErrorsAndUncachedTurnsAlone(t *testing.T) {
 func TestEvictionWithoutAnInvalidateHookStillRetries(t *testing.T) {
 	t.Parallel()
 	fake := &fakeLLM{scripts: [][]fakeEvent{{{err: reapedErr}}, {{resp: text("ok")}}}}
-	m := &model{inner: fake, cacheName: func(context.Context) string { return "c" }}
+	m := &model{inner: fake, cacheModel: "gemini-3.6-flash", cacheName: func(context.Context) string { return "c" }}
 	if out, err := drain(t, m.GenerateContent(context.Background(), cachedRequest(), false)); err != nil || len(out) != 1 {
 		t.Errorf("got %v, %v", out, err)
 	}
