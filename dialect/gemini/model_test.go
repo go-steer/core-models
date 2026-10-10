@@ -190,6 +190,11 @@ func TestAStreamIsAggregated(t *testing.T) {
 		if !r.Partial {
 			t.Error("a streamed chunk is not marked partial")
 		}
+		// One TurnComplete per call, on the aggregate: a consumer that
+		// commits usage on it would otherwise count the call twice.
+		if r.TurnComplete {
+			t.Error("a streamed chunk is marked TurnComplete; only the aggregate may be")
+		}
 	}
 	if final.Partial || !final.TurnComplete {
 		t.Errorf("final partial=%v turnComplete=%v", final.Partial, final.TurnComplete)

@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## v0.6.1 (2026-10-10)
+
+### Fixed
+
+- **A streamed Gemini call is marked complete once.** `dialect/gemini`
+  set `TurnComplete` on the last streamed chunk and on the aggregate
+  after it, so a consumer that commits usage on `TurnComplete` counted the
+  call twice. core-agent's `usage.TurnTap` did: a live run showed about
+  twice the tokens. Only the aggregate is marked now, as in the other
+  dialects, and `llm.Response` documents the rule.
+
 ## v0.6.0 (2026-10-10)
 
 ### Added

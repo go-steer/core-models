@@ -59,6 +59,11 @@ type Request struct {
 //
 // CustomMetadata is where an adapter attaches what genai's usage struct
 // cannot hold — see package usage.
+//
+// Every dialect yields exactly one response with TurnComplete set per
+// call: the single response of a unary call, or the aggregate that ends
+// a stream. Streamed chunks are Partial and never TurnComplete, so a
+// consumer that commits usage on TurnComplete counts each call once.
 type Response struct {
 	Content                 *genai.Content                              `json:"content,omitempty"`
 	CitationMetadata        *genai.CitationMetadata                     `json:"citationMetadata,omitempty"`
