@@ -95,10 +95,12 @@ func (m *baseModel) GenerateContent(ctx context.Context, req *llm.Request, strea
 			if resp.ResponseID != "" {
 				lastID = resp.ResponseID
 			}
+			// Chunks never carry TurnComplete: the aggregate below is
+			// the turn's one completion, as in every other dialect. ADK's
+			// Gemini model marks the last chunk instead, and marking both
+			// made a consumer that commits usage on TurnComplete count a
+			// streamed call twice (core-agent's usage.TurnTap did).
 			r := m.convert(resp)
-			if len(resp.Candidates) > 0 && resp.Candidates[0] != nil {
-				r.TurnComplete = resp.Candidates[0].FinishReason != ""
-			}
 			agg.add(r)
 			if !yield(r, nil) {
 				return
