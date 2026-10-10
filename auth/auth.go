@@ -32,6 +32,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 
 	cloudauth "cloud.google.com/go/auth"
 	"cloud.google.com/go/auth/credentials"
@@ -65,6 +66,10 @@ type Config struct {
 	// Env names the environment variable holding the key or token, for
 	// APIKey and Bearer.
 	Env string `json:"env,omitempty" yaml:"env,omitempty"`
+	// AltEnv lists further variables tried in order when Env is unset,
+	// for a vendor whose key goes by two names (Gemini's GOOGLE_API_KEY
+	// and GEMINI_API_KEY).
+	AltEnv []string `json:"alt_env,omitempty" yaml:"alt_env,omitempty"`
 	// Scopes overrides the OAuth scopes GoogleADC requests.
 	Scopes []string `json:"scopes,omitempty" yaml:"scopes,omitempty"`
 }
@@ -80,11 +85,11 @@ func (c Config) Validate() error {
 			return fmt.Errorf("auth kind %q takes no scopes", c.Kind)
 		}
 	case GoogleADC:
-		if c.Env != "" {
+		if c.Env != "" || len(c.AltEnv) > 0 {
 			return errors.New(`auth kind "google_adc" takes no env: credentials come from ADC`)
 		}
 	case None:
-		if c.Env != "" || len(c.Scopes) > 0 {
+		if c.Env != "" || len(c.AltEnv) > 0 || len(c.Scopes) > 0 {
 			return errors.New(`auth kind "none" takes no env or scopes`)
 		}
 	case "":
@@ -130,9 +135,14 @@ func (c Config) Resolve(ctx context.Context, opts Options) (*Credential, error) 
 	cred := &Credential{kind: c.Kind, env: c.Env}
 	switch c.Kind {
 	case APIKey, Bearer:
-		cred.secret = getenv(c.Env)
+		for _, name := range append([]string{c.Env}, c.AltEnv...) {
+			if v := getenv(name); v != "" {
+				cred.secret, cred.env = v, name
+				break
+			}
+		}
 		if cred.secret == "" {
-			return nil, fmt.Errorf("auth: %s is not set", c.Env)
+			return nil, fmt.Errorf("auth: %s is not set", strings.Join(append([]string{c.Env}, c.AltEnv...), " or "))
 		}
 	case GoogleADC:
 		scopes := c.Scopes

@@ -62,6 +62,7 @@
 package retry
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -75,6 +76,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/go-steer/core-models/callctx"
 )
 
 // Policy configures Transport. The zero value is not useful; start
@@ -104,6 +107,19 @@ type Policy struct {
 	// randomized, so callers that failed together do not retry
 	// together. Header-requested delays are never jittered.
 	Jitter float64
+
+	// AfterSuccess retries a response the rules above would hand back,
+	// once per request, when the call's session has already been served
+	// (callctx.PriorCallSucceeded) and AfterSuccess says so. It is for
+	// a rejection that is ambiguous on its own: Vertex's bare 400
+	// INVALID_ARGUMENT names nothing, so on a first call it is as likely
+	// a malformed request as a transient fault, but on a session whose
+	// previous call under the same config succeeded it has been
+	// transient every time it was recorded (core-agent #898, #1247).
+	// It is consulted only for a 4xx or 5xx; body is that response's
+	// body, at most 64 KiB, and stays readable by the caller when the
+	// response is handed back. Nil disables it.
+	AfterSuccess func(status int, body []byte) bool
 
 	// Sleep waits for d or until ctx is done. Nil means a real timer;
 	// tests substitute it.
@@ -242,10 +258,14 @@ func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	ctx := req.Context()
 	rec := recordFrom(ctx)
 	backoff := t.p.InitialBackoff
+	afterSuccessUsed := false
 	for attempt := 0; ; attempt++ {
 		resp, err := t.attempt(req)
 		if !retryable(ctx, resp, err) {
-			return resp, err
+			if afterSuccessUsed || !t.afterSuccess(ctx, resp, err) {
+				return resp, err
+			}
+			afterSuccessUsed = true
 		}
 		status := statusOf(resp)
 		if attempt >= t.p.MaxRetries {
@@ -275,6 +295,29 @@ func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
 			backoff = t.p.grow(backoff)
 		}
 	}
+}
+
+// afterSuccess reports whether Policy.AfterSuccess licenses one retry
+// of resp. It reads resp's body to decide and puts it back, so a
+// response that is not retried reaches the caller intact.
+func (t *transport) afterSuccess(ctx context.Context, resp *http.Response, err error) bool {
+	// The status first, and the body only for an error: a success is
+	// never AfterSuccess's business, and reading ahead into a 200 would
+	// buffer a stream before the caller saw its first token.
+	if t.p.AfterSuccess == nil || err != nil || resp == nil || resp.StatusCode < http.StatusBadRequest ||
+		ctx.Err() != nil || !callctx.PriorCallSucceeded(ctx) {
+		return false
+	}
+	body, rerr := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	rest := resp.Body
+	resp.Body = struct {
+		io.Reader
+		io.Closer
+	}{io.MultiReader(bytes.NewReader(body), rest), rest}
+	if rerr != nil {
+		return false
+	}
+	return t.p.AfterSuccess(resp.StatusCode, body)
 }
 
 // attempt sends req once, abandoning it if no response headers arrive

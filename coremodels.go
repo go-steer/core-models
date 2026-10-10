@@ -61,6 +61,14 @@ type Options struct {
 	HTTPClient *http.Client
 	// Retry overrides the HTTP-layer retry policy.
 	Retry *retry.Policy
+	// BuiltinTools turns on server-side tools by their provider-neutral
+	// names (web_search, url_context, code_execution), for a dialect
+	// that has them. Empty is none. Opening a profile whose dialect has
+	// none with any set is an error, not a silently missing tool.
+	BuiltinTools []string
+	// Logf receives an adapter's operator-facing notices. Nil discards
+	// them.
+	Logf func(format string, args ...any)
 }
 
 // Open resolves p and returns a Provider for it.
@@ -72,6 +80,9 @@ func Open(ctx context.Context, p profile.Profile, opts Options) (Provider, error
 	rp := r.Profile
 	switch rp.Dialect {
 	case profile.OpenAIChat:
+		if len(opts.BuiltinTools) > 0 {
+			return nil, fmt.Errorf("profile %q: dialect %s has no server-side tools, but %v were asked for", rp.Name, rp.Dialect, opts.BuiltinTools)
+		}
 		c, err := openaichat.New(openaichat.Options{
 			BaseURL:                r.BaseURL,
 			Credential:             r.Credential,
@@ -96,8 +107,10 @@ func Open(ctx context.Context, p profile.Profile, opts Options) (Provider, error
 				ExtraBody:          rp.ExtraBodyFor(id),
 			})
 		}}, nil
-	case profile.OpenAIResponses, profile.Anthropic, profile.Gemini:
-		return nil, fmt.Errorf("profile %q: dialect %s is not built yet (docs/design.md §11: openai-responses is L2, anthropic L4, gemini L5)", rp.Name, rp.Dialect)
+	case profile.Gemini:
+		return openGemini(ctx, r, opts)
+	case profile.OpenAIResponses, profile.Anthropic:
+		return nil, fmt.Errorf("profile %q: dialect %s is not built yet (docs/design.md §11: openai-responses is L2, anthropic L4)", rp.Name, rp.Dialect)
 	}
 	return nil, fmt.Errorf("profile %q: unknown dialect %q", rp.Name, rp.Dialect)
 }

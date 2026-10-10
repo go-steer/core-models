@@ -37,7 +37,7 @@ A self-hosted vLLM server, starting from the built-in `vllm` template:
 | `params` | Values for `base_url`'s placeholders. Each may be `${VAR}` or `${VAR:-default}` |
 | `auth.kind` | `api_key` or `bearer` (with `auth.env` naming the variable that holds it), `google_adc`, or `none` |
 | `auth.scopes` | OAuth scopes for `google_adc`. Defaults to cloud-platform |
-| `backend` | The name prices are keyed on. Defaults to `name`, except that a profile extending `vertex-maas` keeps `vertex-maas` |
+| `backend` | The name prices are keyed on. Defaults to `name`, except that a profile extending `vertex-maas`, `gemini` or `vertex` keeps the built-in's |
 | `open_models` | Accept any model id, not only the listed ones. Set on every self-hosted template |
 | `capabilities` | `response_schema`, `reasoning_echo`, `parallel_tool_calls`, `server_tools`, `streaming`, `forced_tool_choice`. Each is true, false, or unset. Unset reads as absent, except `forced_tool_choice`, which is assumed supported unless declared false |
 | `usage.cached_tokens` | `unreliable` records cached tokens as not reported even when the server sends them |
@@ -61,6 +61,8 @@ instead, and the response carries `core_models.tool_choice_downgraded`.
 
 | Profile | Dialect | Endpoint | Auth | Notes |
 |---|---|---|---|---|
+| `gemini` | gemini | The Gemini Developer API | API key from `GOOGLE_API_KEY`, or `GEMINI_API_KEY` | Backend `gemini`. Server-side tools (`web_search`, `url_context`, `code_execution`) are off unless asked for |
+| `vertex` | gemini | Gemini on Vertex AI for the project and region | Google ADC | Backend `vertex`. Project from `GOOGLE_CLOUD_PROJECT`. Region from `GOOGLE_CLOUD_LOCATION`, default `global` |
 | `vertex-maas` | openai-chat | Vertex AI's OpenAI-compatible endpoint for the project and region | Google ADC | Project from `GOOGLE_CLOUD_PROJECT`. Region from `GOOGLE_CLOUD_LOCATION`, default `global`. Ids are publisher-qualified, such as `openai/gpt-oss-20b-maas`. Lists the gpt-oss models with `forced_tool_choice: false`, per Google's function-calling notes; any other id is still accepted |
 | `ollama` | openai-chat | `http://localhost:11434/v1` | none | Works with nothing set. `reasoning_format: think_tags` |
 | `vllm` | openai-chat | *template: set `base_url`* | none | Parallel tool calls declared |
