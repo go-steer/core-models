@@ -65,6 +65,12 @@ func (d Dialect) known() bool {
 	return false
 }
 
+// Platform is where a vendor's API is hosted; see Profile.Platform.
+type Platform string
+
+// PlatformVertex is Google Cloud's Vertex AI.
+const PlatformVertex Platform = "vertex"
+
 // Tier is the three-rung vocabulary products route on.
 type Tier string
 
@@ -99,6 +105,13 @@ type Profile struct {
 	Extends string `json:"extends,omitempty" yaml:"extends,omitempty"`
 	// Dialect is the server's wire format.
 	Dialect Dialect `json:"dialect,omitempty" yaml:"dialect,omitempty"`
+	// Platform is where a vendor's API is hosted, when that changes the
+	// request: empty for the vendor's own service, PlatformVertex for
+	// Vertex AI, which takes the model in the URL path. Said explicitly
+	// rather than inferred from the credential or the backend name,
+	// because a proxy in front of Vertex may take a bearer token, and a
+	// backend can be renamed for pricing alone.
+	Platform Platform `json:"platform,omitempty" yaml:"platform,omitempty"`
 	// BaseURL is the API root. It may contain {param} placeholders,
 	// filled from Params.
 	BaseURL string `json:"base_url,omitempty" yaml:"base_url,omitempty"`
@@ -331,13 +344,20 @@ func (p Profile) Validate() error {
 		bad("dialect %q is not one of openai-chat, openai-responses, anthropic, gemini", p.Dialect)
 	}
 	switch {
+	case p.Platform == "":
+	case p.Platform != PlatformVertex:
+		bad("platform %q is not \"vertex\" or unset", p.Platform)
+	case p.Dialect != Anthropic && p.Dialect != Gemini:
+		bad("platform %q applies to the anthropic and gemini dialects, not %s", p.Platform, p.Dialect)
+	}
+	switch {
 	case p.BaseURL == "" && (p.Dialect == OpenAIChat || p.Dialect == OpenAIResponses):
 		bad("base_url is required for dialect %s", p.Dialect)
 	case p.BaseURL != "":
 		// Placeholders and ${VAR}s are filled at Resolve; stand a "0" in
 		// for each so the shape check holds wherever they sit, the port
 		// included.
-		shape := placeholderRE.ReplaceAllString(envRE.ReplaceAllString(p.BaseURL, "0"), "0")
+		shape := placeholderRE.ReplaceAllString(stripEnv(p.BaseURL), "0")
 		if err := checkURL(shape); err != nil {
 			bad("base_url: %v", err)
 		}
@@ -351,7 +371,7 @@ func (p Profile) Validate() error {
 		bad("%v", err)
 	}
 	if p.MetricsURL != "" {
-		if err := checkURL(envRE.ReplaceAllString(p.MetricsURL, "0")); err != nil {
+		if err := checkURL(stripEnv(p.MetricsURL)); err != nil {
 			bad("metrics_url: %v", err)
 		}
 	}
@@ -437,26 +457,119 @@ func checkURL(raw string) error {
 	return nil
 }
 
-// expandEnv replaces ${VAR} and ${VAR:-default} in s. A ${VAR} that is
-// unset, with no default, is an error naming VAR.
+// expandEnv replaces ${VAR} and ${VAR:-default} in s. A default may
+// itself contain ${…}, so a chain of variables reads as one value:
+// ${ANTHROPIC_VERTEX_PROJECT_ID:-${GOOGLE_CLOUD_PROJECT}} is the first
+// that is set. A ${VAR} that is unset, with no default, is an error
+// naming every variable its chain tried.
 func expandEnv(s string, getenv func(string) string) (string, error) {
 	var missing []string
-	out := envRE.ReplaceAllStringFunc(s, func(m string) string {
-		inner := m[2 : len(m)-1]
-		name, def, hasDef := strings.Cut(inner, ":-")
+	out, err := scanEnv(s, func(name, def string, hasDef bool) (string, error) {
 		if v := getenv(name); v != "" {
-			return v
+			return v, nil
 		}
-		if hasDef {
-			return def
+		if !hasDef {
+			missing = append(missing, name)
+			return "", nil
 		}
-		missing = append(missing, name)
-		return ""
+		before := len(missing)
+		v, err := expandEnv(def, getenv)
+		if err != nil {
+			// A default's own unset variable: report the chain, so the
+			// operator sees every name that would have satisfied it.
+			var me *missingEnvError
+			if errors.As(err, &me) {
+				missing = append(missing[:before], name+" or "+strings.Join(me.names, ", "))
+				return "", nil
+			}
+			return "", err
+		}
+		return v, nil
 	})
+	if err != nil {
+		return "", err
+	}
 	if len(missing) > 0 {
-		return "", fmt.Errorf("%s is not set", strings.Join(missing, ", "))
+		return "", &missingEnvError{names: missing}
 	}
 	return out, nil
 }
 
-var envRE = regexp.MustCompile(`\$\{[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\}`)
+type missingEnvError struct{ names []string }
+
+func (e *missingEnvError) Error() string { return strings.Join(e.names, ", ") + " is not set" }
+
+// stripEnv replaces every ${…} in s with "0", for checking a URL's
+// shape before the environment is read.
+func stripEnv(s string) string {
+	out, err := scanEnv(s, func(string, string, bool) (string, error) { return "0", nil })
+	if err != nil {
+		return s
+	}
+	return out
+}
+
+// scanEnv calls repl for each top-level ${NAME} or ${NAME:-default} in
+// s, with default's text unexpanded, and splices in what it returns.
+// Text that is not a well-formed reference — a "$" alone, or "${" with
+// no valid name — is copied as it stands, as the regular expression
+// this replaced did.
+func scanEnv(s string, repl func(name, def string, hasDef bool) (string, error)) (string, error) {
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		if !strings.HasPrefix(s[i:], "${") {
+			b.WriteByte(s[i])
+			i++
+			continue
+		}
+		name, def, hasDef, n, ok := parseEnvRef(s[i:])
+		if !ok {
+			b.WriteByte(s[i])
+			i++
+			continue
+		}
+		v, err := repl(name, def, hasDef)
+		if err != nil {
+			return "", err
+		}
+		b.WriteString(v)
+		i += n
+	}
+	return b.String(), nil
+}
+
+// parseEnvRef parses a reference at the start of s, which begins with
+// "${". It returns the reference's length n; ok is false when s does not
+// start with a well-formed one.
+func parseEnvRef(s string) (name, def string, hasDef bool, n int, ok bool) {
+	j := 2
+	for j < len(s) && (s[j] == '_' || s[j] >= 'A' && s[j] <= 'Z' || s[j] >= 'a' && s[j] <= 'z' || j > 2 && s[j] >= '0' && s[j] <= '9') {
+		j++
+	}
+	if j == 2 {
+		return "", "", false, 0, false
+	}
+	name = s[2:j]
+	if strings.HasPrefix(s[j:], "}") {
+		return name, "", false, j + 1, true
+	}
+	if !strings.HasPrefix(s[j:], ":-") {
+		return "", "", false, 0, false
+	}
+	// The default runs to the brace that closes this reference; braces
+	// of nested references inside it are matched on the way.
+	depth := 0
+	for k := j + 2; k < len(s); k++ {
+		switch {
+		case strings.HasPrefix(s[k:], "${"):
+			depth++
+			k++
+		case s[k] == '}':
+			if depth == 0 {
+				return name, s[j+2 : k], true, k + 1, true
+			}
+			depth--
+		}
+	}
+	return "", "", false, 0, false
+}

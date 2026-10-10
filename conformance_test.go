@@ -25,8 +25,9 @@ package coremodels_test
 //
 // To add a server: run the live smoke against it with
 // CORE_MODELS_LIVE_RECORD=testdata/conformance/<server>, write a
-// meta.json naming the profile and model, and redact anything
-// identifying from the request paths.
+// meta.json naming the profile and model (and base_path and
+// request_path, when the profile's base_url has no /v1 root), and redact
+// anything identifying from the request paths.
 
 import (
 	"bytes"
@@ -38,7 +39,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"strings"
 	"sync"
 	"testing"
 
@@ -53,6 +53,13 @@ type corpusMeta struct {
 	// ExtraBody is the model's extra_body when the recording was made, so
 	// the replay sends the same request.
 	ExtraBody map[string]any `json:"extra_body,omitempty"`
+	// BasePath is the path under the replay server the profile's base_url
+	// points at. Empty means "/v1"; Claude on Vertex AI has no /v1 root
+	// and names its publisher prefix instead.
+	BasePath string `json:"base_path,omitempty"`
+	// RequestPath is the exact path every replayed request must reach.
+	// Empty means "/v1/chat/completions".
+	RequestPath string `json:"request_path,omitempty"`
 }
 
 func TestConformance(t *testing.T) {
@@ -73,11 +80,19 @@ func TestConformance(t *testing.T) {
 			for _, sc := range scenarios {
 				t.Run(sc.name, func(t *testing.T) {
 					rec := loadExchanges(t, filepath.Join(dir, sc.name+".jsonl"))
-					rp := &replay{t: t, exchanges: rec}
+					want := meta.RequestPath
+					if want == "" {
+						want = "/v1/chat/completions"
+					}
+					rp := &replay{t: t, exchanges: rec, path: want}
 					srv := httptest.NewServer(rp)
 					defer srv.Close()
 
-					p := profile.Profile{Name: "replay", Extends: meta.Profile, BaseURL: srv.URL + "/v1"}
+					base := meta.BasePath
+					if base == "" {
+						base = "/v1"
+					}
+					p := profile.Profile{Name: "replay", Extends: meta.Profile, BaseURL: srv.URL + base}
 					if meta.ExtraBody != nil {
 						p.Models = []profile.Model{{ID: meta.Model, ExtraBody: meta.ExtraBody}}
 					}
@@ -123,6 +138,7 @@ func loadExchanges(t *testing.T, path string) []exchange {
 
 type replay struct {
 	t         *testing.T
+	path      string // the exact path each request must reach
 	mu        sync.Mutex
 	exchanges []exchange
 	n         int
@@ -145,8 +161,8 @@ func (r *replay) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	e := r.exchanges[n]
-	if !strings.HasSuffix(req.URL.Path, "/chat/completions") {
-		r.t.Errorf("request %d went to %s", n+1, req.URL.Path)
+	if req.URL.Path != r.path {
+		r.t.Errorf("request %d went to %s, want %s", n+1, req.URL.Path, r.path)
 	}
 	body, _ := io.ReadAll(req.Body)
 	var got, want any

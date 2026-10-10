@@ -27,6 +27,7 @@ import (
 
 	coremodels "github.com/go-steer/core-models"
 	"github.com/go-steer/core-models/auth"
+	"github.com/go-steer/core-models/dialect/anthropic"
 	"github.com/go-steer/core-models/llm"
 	"github.com/go-steer/core-models/profile"
 	"github.com/go-steer/core-models/usage"
@@ -105,8 +106,8 @@ func TestOpenRefusesBeforeAnyRequest(t *testing.T) {
 	}{
 		"missing project":  {profile.Profile{Name: "m", Extends: "vertex-maas"}, nil, "GOOGLE_CLOUD_PROJECT is not set"},
 		"template, no url": {profile.Profile{Name: "v", Extends: "vllm"}, nil, "base_url is required"},
-		"unbuilt dialect": {profile.Profile{Name: "claude", Dialect: profile.Anthropic, Auth: auth.Config{Kind: auth.None},
-			OpenModels: new(true)}, nil, "not built yet"},
+		"unbuilt dialect": {profile.Profile{Name: "resp", Dialect: profile.OpenAIResponses, BaseURL: "http://127.0.0.1:1/v1",
+			Auth: auth.Config{Kind: auth.None}, OpenModels: new(true)}, nil, "not built yet"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := coremodels.Open(context.Background(), tc.p, opts(tc.env))
@@ -192,4 +193,200 @@ func TestOpenAppliesPerModelExtraBody(t *testing.T) {
 	if _, ok := bodies[1]["chat_template_kwargs"]; ok {
 		t.Error("another model received gemma's extra_body")
 	}
+}
+
+// claudeSSE is the smallest complete Messages stream.
+const claudeSSE = `event: message_start
+data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-haiku-4-5","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":3,"output_tokens":1}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":1}}
+
+event: message_stop
+data: {"type":"message_stop"}
+
+`
+
+// claudeServer records each request's path, auth headers and body.
+type claudeServer struct {
+	*httptest.Server
+	path, key, bearer string
+	body              map[string]any
+}
+
+func newClaudeServer(t *testing.T) *claudeServer {
+	t.Helper()
+	c := &claudeServer{}
+	c.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c.path, c.key, c.bearer = r.URL.Path, r.Header.Get("X-Api-Key"), r.Header.Get("Authorization")
+		raw, _ := io.ReadAll(r.Body)
+		c.body = nil
+		_ = json.Unmarshal(raw, &c.body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, claudeSSE)
+	}))
+	t.Cleanup(c.Close)
+	return c
+}
+
+func callClaude(t *testing.T, p coremodels.Provider) *llm.Response {
+	t.Helper()
+	m, err := p.Model(context.Background(), "claude-haiku-4-5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var final *llm.Response
+	req := &llm.Request{
+		Contents: []*genai.Content{genai.NewContentFromText("hi", genai.RoleUser)},
+		Config:   &genai.GenerateContentConfig{SystemInstruction: genai.NewContentFromText("be brief", genai.RoleUser)},
+	}
+	for r, err := range m.GenerateContent(context.Background(), req, false) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		final = r
+	}
+	return final
+}
+
+// The two Claude built-ins, opened and called: the first-party API with
+// its key, Vertex AI with ADC and the model in the path.
+func TestOpenAnAnthropicProfile(t *testing.T) {
+	t.Run("first party", func(t *testing.T) {
+		s := newClaudeServer(t)
+		p, err := coremodels.Open(context.Background(),
+			profile.Profile{Name: "claude", Extends: "anthropic", BaseURL: s.URL},
+			opts(map[string]string{"ANTHROPIC_API_KEY": "sk-ant-test"}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		final := callClaude(t, p)
+		if s.path != "/v1/messages" || s.key != "sk-ant-test" || s.bearer != "" {
+			t.Errorf("path %q, x-api-key %q, Authorization %q", s.path, s.key, s.bearer)
+		}
+		d, _ := usage.FromMetadata(final.CustomMetadata)
+		if d == nil || d.Backend != "claude" || final.ModelVersion != "claude-haiku-4-5" {
+			t.Errorf("detail %+v, model version %q", d, final.ModelVersion)
+		}
+	})
+	t.Run("vertex", func(t *testing.T) {
+		s := newClaudeServer(t)
+		p, err := coremodels.Open(context.Background(),
+			profile.Profile{Name: "claude-vertex", Extends: "anthropic-vertex",
+				BaseURL: s.URL + "/v1/projects/{project}/locations/{region}/publishers/anthropic/models"},
+			opts(map[string]string{"GOOGLE_CLOUD_PROJECT": "acme"}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		final := callClaude(t, p)
+		if want := "/v1/projects/acme/locations/us-east5/publishers/anthropic/models/claude-haiku-4-5:streamRawPredict"; s.path != want {
+			t.Errorf("path = %s, want %s", s.path, want)
+		}
+		if s.bearer != "Bearer ya29.test" || s.key != "" {
+			t.Errorf("Authorization %q, x-api-key %q", s.bearer, s.key)
+		}
+		d, _ := usage.FromMetadata(final.CustomMetadata)
+		if d == nil || d.Backend != "anthropic-vertex" || d.Region != "us-east5" {
+			t.Errorf("detail %+v", d)
+		}
+	})
+}
+
+// Prompt caching is on by default through Open, off with a zero policy,
+// and server-side tools are off unless named.
+func TestOpenAnthropicCachingAndBuiltins(t *testing.T) {
+	env := map[string]string{"ANTHROPIC_API_KEY": "k"}
+	open := func(t *testing.T, s *claudeServer, o coremodels.Options) coremodels.Provider {
+		t.Helper()
+		p, err := coremodels.Open(context.Background(), profile.Profile{Name: "claude", Extends: "anthropic", BaseURL: s.URL}, o)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	systemMarked := func(body map[string]any) bool {
+		sys, _ := body["system"].([]any)
+		if len(sys) == 0 {
+			return false
+		}
+		_, ok := sys[len(sys)-1].(map[string]any)["cache_control"]
+		return ok
+	}
+
+	s := newClaudeServer(t)
+	callClaude(t, open(t, s, opts(env)))
+	if !systemMarked(s.body) {
+		t.Error("default Open placed no cache breakpoint on the system block")
+	}
+	if _, ok := s.body["tools"]; ok {
+		t.Errorf("default Open sent tools %v, want none", s.body["tools"])
+	}
+
+	o := opts(env)
+	o.PromptCache = &anthropic.CacheOptions{}
+	o.BuiltinTools = []string{"web_search"}
+	callClaude(t, open(t, s, o))
+	if systemMarked(s.body) {
+		t.Error("a zero PromptCache still placed a breakpoint")
+	}
+	tools, _ := s.body["tools"].([]any)
+	if len(tools) != 1 || tools[0].(map[string]any)["name"] != "web_search" {
+		t.Errorf("tools = %v, want web_search", tools)
+	}
+
+	// A tool Claude does not have is refused at Open, as for gemini.
+	o.BuiltinTools = []string{"web_search", "url_context"}
+	if _, err := coremodels.Open(context.Background(), profile.Profile{Name: "claude", Extends: "anthropic", BaseURL: s.URL}, o); err == nil || !strings.Contains(err.Error(), "url_context") {
+		t.Errorf("Open with url_context = %v, want it refused by name", err)
+	}
+}
+
+// Vertex routing follows the profile's platform, not its credential. A
+// proxy in front of Vertex that takes a bearer token is still Vertex,
+// and a first-party gateway that takes Google tokens is not.
+func TestOpenRoutesClaudeByPlatform(t *testing.T) {
+	t.Run("vertex behind a bearer-token proxy", func(t *testing.T) {
+		s := newClaudeServer(t)
+		p, err := coremodels.Open(context.Background(), profile.Profile{
+			Name: "claude-proxy", Extends: "anthropic-vertex",
+			BaseURL: s.URL + "/v1/projects/{project}/locations/{region}/publishers/anthropic/models",
+			Auth:    auth.Config{Kind: auth.Bearer, Env: "PROXY_TOKEN"},
+		}, opts(map[string]string{"GOOGLE_CLOUD_PROJECT": "acme", "PROXY_TOKEN": "tok"}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		callClaude(t, p)
+		if want := "/v1/projects/acme/locations/us-east5/publishers/anthropic/models/claude-haiku-4-5:streamRawPredict"; s.path != want {
+			t.Errorf("path = %s, want the Vertex route %s", s.path, want)
+		}
+		if s.bearer != "Bearer tok" {
+			t.Errorf("Authorization = %q", s.bearer)
+		}
+	})
+	t.Run("first party behind a Google-token gateway", func(t *testing.T) {
+		s := newClaudeServer(t)
+		p, err := coremodels.Open(context.Background(), profile.Profile{
+			Name: "claude-gw", Extends: "anthropic", BaseURL: s.URL,
+			Auth: auth.Config{Kind: auth.GoogleADC},
+		}, opts(nil))
+		if err != nil {
+			t.Fatal(err)
+		}
+		callClaude(t, p)
+		if s.path != "/v1/messages" {
+			t.Errorf("path = %s, want the first-party /v1/messages", s.path)
+		}
+		if s.bearer != "Bearer ya29.test" {
+			t.Errorf("Authorization = %q", s.bearer)
+		}
+	})
 }

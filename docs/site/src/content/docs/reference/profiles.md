@@ -33,8 +33,9 @@ A self-hosted vLLM server, starting from the built-in `vllm` template:
 | `name` | What `--provider` and product config refer to. Lowercase letters, digits and `-` |
 | `extends` | A built-in profile to start from. Every field set here overrides the built-in's |
 | `dialect` | `openai-chat`, `openai-responses`, `anthropic` or `gemini` |
-| `base_url` | The API root. May contain `{param}` placeholders and `${VAR}` references. Required for the OpenAI dialects |
-| `params` | Values for `base_url`'s placeholders. Each may be `${VAR}` or `${VAR:-default}` |
+| `platform` | Where the vendor's API is hosted, when that changes the request. `vertex` routes an `anthropic` profile the way Vertex AI serves Claude: the model in the URL path, `anthropic_version` in the body. Set on `anthropic-vertex` and inherited by profiles extending it; unset means the vendor's own API. Said explicitly because neither the credential nor the backend name settles it: a proxy in front of Vertex may take a bearer token |
+| `base_url` | The API root. May contain `{param}` placeholders and `${VAR}` references. Required for the OpenAI dialects. For `anthropic` with `platform: vertex`, the Vertex AI publisher prefix (`…/publishers/anthropic/models`) |
+| `params` | Values for `base_url`'s placeholders. Each may be `${VAR}` or `${VAR:-default}`, and a default may itself be a reference: `${A:-${B:-x}}` is the first of `A` and `B` that is set, else `x` |
 | `auth.kind` | `api_key` or `bearer` (with `auth.env` naming the variable that holds it), `google_adc`, or `none` |
 | `auth.scopes` | OAuth scopes for `google_adc`. Defaults to cloud-platform |
 | `backend` | The name prices are keyed on. Defaults to `name`, except that a profile extending `vertex-maas`, `gemini` or `vertex` keeps the built-in's |
@@ -61,6 +62,8 @@ instead, and the response carries `core_models.tool_choice_downgraded`.
 
 | Profile | Dialect | Endpoint | Auth | Notes |
 |---|---|---|---|---|
+| `anthropic` | anthropic | `https://api.anthropic.com` | API key from `ANTHROPIC_API_KEY`, sent as `x-api-key` | Any Claude id. No tiers: which model a tier means is the product's call |
+| `anthropic-vertex` | anthropic | Vertex AI's Claude publisher prefix for the project and region | Google ADC | `platform: vertex`. Project from `ANTHROPIC_VERTEX_PROJECT_ID`, then `GOOGLE_CLOUD_PROJECT`. Region from `CLOUD_ML_REGION`, then `GOOGLE_CLOUD_LOCATION`, default `us-east5`; `global`, `us` and `eu` get their own hosts. Backend `anthropic-vertex`. Ids as Vertex names them, such as `claude-opus-4-5@20251101` |
 | `gemini` | gemini | The Gemini Developer API | API key from `GOOGLE_API_KEY`, or `GEMINI_API_KEY` | Backend `gemini`. Server-side tools (`web_search`, `url_context`, `code_execution`) are off unless asked for |
 | `vertex` | gemini | Gemini on Vertex AI for the project and region | Google ADC | Backend `vertex`. Project from `GOOGLE_CLOUD_PROJECT`. Region from `GOOGLE_CLOUD_LOCATION`, default `global` |
 | `vertex-maas` | openai-chat | Vertex AI's OpenAI-compatible endpoint for the project and region | Google ADC | Project from `GOOGLE_CLOUD_PROJECT`. Region from `GOOGLE_CLOUD_LOCATION`, default `global`. Ids are publisher-qualified, such as `openai/gpt-oss-20b-maas`. Lists the gpt-oss models with `forced_tool_choice: false`, per Google's function-calling notes; any other id is still accepted |

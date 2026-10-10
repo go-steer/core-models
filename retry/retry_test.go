@@ -175,6 +175,23 @@ func TestEveryAttemptCarriesTheWholeBody(t *testing.T) {
 	}
 }
 
+// TestAnthropicOverloadedIsRetried: 529 is Anthropic's "over capacity",
+// which anthropic-sdk-go retried before this transport took its place.
+func TestAnthropicOverloadedIsRetried(t *testing.T) {
+	s := &script{steps: []func(http.ResponseWriter){status(529), status(200)}}
+	srv := httptest.NewServer(s)
+	defer srv.Close()
+	var waits []time.Duration
+	resp, err := post(t, context.Background(), policy(&waits).Transport(nil), srv.URL, "{}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || len(s.bodies) != 2 {
+		t.Errorf("got %d after %d attempts, want 200 after 2", resp.StatusCode, len(s.bodies))
+	}
+}
+
 func TestWhatIsNotRetried(t *testing.T) {
 	for name, step := range map[string]func(http.ResponseWriter){
 		"400":                         status(400),

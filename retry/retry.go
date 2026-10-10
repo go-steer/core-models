@@ -34,7 +34,8 @@
 //
 // # What is retried
 //
-// A response whose status is 408, 429, 500, 502, 503 or 504, and a
+// A response whose status is 408, 429, 500, 502, 503, 504 or 529
+// (Anthropic's "overloaded"), and a
 // request that failed before any response arrived (a refused or dropped
 // connection, a timeout, a DNS failure — anything but a certificate
 // error), unless the server sent
@@ -390,11 +391,18 @@ func retryable(ctx context.Context, resp *http.Response, err error) bool {
 	switch resp.StatusCode {
 	case http.StatusRequestTimeout, http.StatusTooManyRequests,
 		http.StatusInternalServerError, http.StatusBadGateway,
-		http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		http.StatusServiceUnavailable, http.StatusGatewayTimeout,
+		statusOverloaded:
 		return true
 	}
 	return false
 }
+
+// statusOverloaded is Anthropic's 529: the API is temporarily over
+// capacity. anthropic-sdk-go retried it, and its retries are off now
+// that this transport does the job, so it is listed here rather than
+// left to x-should-retry, which an intermediary may strip.
+const statusOverloaded = 529
 
 // delay is how long to wait before the next attempt, and whether the
 // server asked for it.

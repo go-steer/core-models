@@ -246,6 +246,126 @@ func TestEnvExpansionInBaseURL(t *testing.T) {
 	}
 }
 
+// A default can itself be a reference, so a chain of variables reads as
+// one value, and an unset chain names every variable it tried.
+func TestNestedEnvDefaults(t *testing.T) {
+	p := profile.Profile{Name: "lab", Extends: "vllm", BaseURL: "http://${A:-${B:-${C}}}:8000/v1"}
+	for name, tc := range map[string]struct {
+		env  map[string]string
+		want string
+	}{
+		"first set wins":       {map[string]string{"A": "a", "B": "b", "C": "c"}, "http://a:8000/v1"},
+		"falls to the second":  {map[string]string{"B": "b", "C": "c"}, "http://b:8000/v1"},
+		"falls to the last":    {map[string]string{"C": "c"}, "http://c:8000/v1"},
+		"literal default ends": {nil, ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r, err := resolve(t, p, tc.env)
+			if tc.want == "" {
+				if err == nil || !strings.Contains(err.Error(), "A or B or C is not set") {
+					t.Errorf("Resolve = %v, want the whole chain named", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if r.BaseURL != tc.want {
+				t.Errorf("BaseURL = %s, want %s", r.BaseURL, tc.want)
+			}
+		})
+	}
+	lit := profile.Profile{Name: "lab", Extends: "vllm", BaseURL: "http://${A:-${B:-localhost}}:8000/v1"}
+	if r, err := resolve(t, lit, nil); err != nil || r.BaseURL != "http://localhost:8000/v1" {
+		t.Errorf("Resolve = %+v, %v; want the innermost literal", r, err)
+	}
+}
+
+// Claude on Vertex AI: core-agent's and mast's env chain, us-east5 by
+// default, and the multi-region hosts Claude is also served from.
+func TestAnthropicVertexEndpoint(t *testing.T) {
+	p, _ := profile.Builtin("anthropic-vertex")
+	const path = "/v1/projects/acme/locations/%s/publishers/anthropic/models"
+	for name, tc := range map[string]struct {
+		env  map[string]string
+		want string
+	}{
+		"project from ANTHROPIC_VERTEX_PROJECT_ID, us-east5 by default": {
+			map[string]string{"ANTHROPIC_VERTEX_PROJECT_ID": "acme", "GOOGLE_CLOUD_PROJECT": "other"},
+			"https://us-east5-aiplatform.googleapis.com" + strings.Replace(path, "%s", "us-east5", 1),
+		},
+		"falls back to the Google variables": {
+			map[string]string{"GOOGLE_CLOUD_PROJECT": "acme", "GOOGLE_CLOUD_LOCATION": "europe-west1"},
+			"https://europe-west1-aiplatform.googleapis.com" + strings.Replace(path, "%s", "europe-west1", 1),
+		},
+		"CLOUD_ML_REGION outranks GOOGLE_CLOUD_LOCATION": {
+			map[string]string{"GOOGLE_CLOUD_PROJECT": "acme", "CLOUD_ML_REGION": "us-east5", "GOOGLE_CLOUD_LOCATION": "europe-west1"},
+			"https://us-east5-aiplatform.googleapis.com" + strings.Replace(path, "%s", "us-east5", 1),
+		},
+		"global": {
+			map[string]string{"GOOGLE_CLOUD_PROJECT": "acme", "CLOUD_ML_REGION": "global"},
+			"https://aiplatform.googleapis.com" + strings.Replace(path, "%s", "global", 1),
+		},
+		"the us multi-region": {
+			map[string]string{"GOOGLE_CLOUD_PROJECT": "acme", "CLOUD_ML_REGION": "us"},
+			"https://aiplatform.us.rep.googleapis.com" + strings.Replace(path, "%s", "us", 1),
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r, err := resolve(t, p, tc.env)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if r.BaseURL != tc.want {
+				t.Errorf("BaseURL = %s\nwant      %s", r.BaseURL, tc.want)
+			}
+			if r.Profile.BackendName() != "anthropic-vertex" || r.Credential.Kind() != auth.GoogleADC {
+				t.Errorf("backend %q, auth %s", r.Profile.BackendName(), r.Credential)
+			}
+		})
+	}
+	_, err := resolve(t, p, nil)
+	if err == nil || !strings.Contains(err.Error(), "ANTHROPIC_VERTEX_PROJECT_ID or GOOGLE_CLOUD_PROJECT is not set") {
+		t.Errorf("Resolve with no project = %v, want both variables named", err)
+	}
+}
+
+func TestAnthropicFirstParty(t *testing.T) {
+	p, _ := profile.Builtin("anthropic")
+	if _, err := resolve(t, p, nil); err == nil || !strings.Contains(err.Error(), "ANTHROPIC_API_KEY") {
+		t.Errorf("Resolve with no key = %v, want ANTHROPIC_API_KEY named", err)
+	}
+	r, err := resolve(t, p, map[string]string{"ANTHROPIC_API_KEY": "sk-ant"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.BaseURL != "https://api.anthropic.com" || r.Credential.Kind() != auth.APIKey || r.Profile.BackendName() != "anthropic" {
+		t.Errorf("resolved = %s, %s, backend %q", r.BaseURL, r.Credential, r.Profile.BackendName())
+	}
+}
+
+func TestPlatform(t *testing.T) {
+	p, _ := profile.Builtin("anthropic-vertex")
+	if p.Platform != profile.PlatformVertex {
+		t.Errorf("anthropic-vertex platform = %q, want vertex", p.Platform)
+	}
+	derived, err := profile.Expand(profile.Profile{Name: "x", Extends: "anthropic-vertex"})
+	if err != nil || derived.Platform != profile.PlatformVertex {
+		t.Errorf("a profile extending anthropic-vertex has platform %q (%v), want it inherited", derived.Platform, err)
+	}
+	for name, tc := range map[string]struct {
+		p    profile.Profile
+		want string
+	}{
+		"unknown platform": {profile.Profile{Name: "a", Dialect: profile.Anthropic, Platform: "bedrock", Auth: auth.Config{Kind: auth.None}, OpenModels: new(true)}, `platform "bedrock"`},
+		"wrong dialect":    {profile.Profile{Name: "b", Dialect: profile.OpenAIChat, BaseURL: "http://h/v1", Platform: profile.PlatformVertex, Auth: auth.Config{Kind: auth.None}, OpenModels: new(true)}, "applies to the anthropic and gemini dialects"},
+	} {
+		if err := tc.p.Validate(); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: Validate = %v, want %q", name, err, tc.want)
+		}
+	}
+}
+
 func TestExpandAnUnknownBuiltin(t *testing.T) {
 	_, err := profile.Expand(profile.Profile{Name: "x", Extends: "vlm"})
 	if err == nil || !strings.Contains(err.Error(), `extends "vlm"`) || !strings.Contains(err.Error(), "vllm") {

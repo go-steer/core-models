@@ -36,6 +36,26 @@
   400 `INVALID_ARGUMENT` (core-agent #898, #1247).
 - **`auth.Config.AltEnv`:** further variables to try for a key that goes by
   more than one name.
+- **The `anthropic` dialect: Claude on the first-party API and on Vertex
+  AI** (`dialect/anthropic`, phase L4), with two built-in profiles,
+  `anthropic` and `anthropic-vertex`. It merges mast's and core-agent's
+  adapters: mast's shape and per-model thinking request, core-agent's
+  rolling and one-hour prompt caching. Opening a profile turns caching on
+  by default; `Options.PromptCache` changes the policy and
+  `callctx.WithoutPromptCache` turns it off for one call. Cache writes,
+  and their one-hour share, land in `usage.Detail`.
+- `coremodels.Options.BuiltinTools` maps `web_search` for Claude; a name
+  Claude has no tool for is an error. `Options.PromptCache` is new.
+- **Nested defaults in profile params:** `${A:-${B:-x}}` reads as the first
+  of `A` and `B` that is set, else `x`.
+- **A Claude recording in the conformance corpus**
+  (`anthropic-vertex-claude-haiku-4-5`).
+- **`platform` in profiles.** `vertex` routes an `anthropic` profile the way
+  Vertex AI serves Claude. `anthropic-vertex` sets it.
+
+### Changed
+
+- **The retry transport also retries 529**, Anthropic's "overloaded".
 
 
 ### Documentation

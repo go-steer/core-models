@@ -29,6 +29,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/go-steer/core-models/dialect/anthropic"
 	"github.com/go-steer/core-models/dialect/openaichat"
 	"github.com/go-steer/core-models/llm"
 	"github.com/go-steer/core-models/profile"
@@ -69,6 +70,12 @@ type Options struct {
 	// Logf receives an adapter's operator-facing notices. Nil discards
 	// them.
 	Logf func(format string, args ...any)
+
+	// PromptCache is the Anthropic prompt-caching policy. Nil means
+	// anthropic.DefaultCacheOptions: the system block and the
+	// conversation tail, at the five-minute TTL. Pass a zero value to
+	// place no breakpoints. Ignored by other dialects.
+	PromptCache *anthropic.CacheOptions
 }
 
 // Open resolves p and returns a Provider for it.
@@ -109,8 +116,10 @@ func Open(ctx context.Context, p profile.Profile, opts Options) (Provider, error
 		}}, nil
 	case profile.Gemini:
 		return openGemini(ctx, r, opts)
-	case profile.OpenAIResponses, profile.Anthropic:
-		return nil, fmt.Errorf("profile %q: dialect %s is not built yet (docs/design.md §11: openai-responses is L2, anthropic L4)", rp.Name, rp.Dialect)
+	case profile.Anthropic:
+		return openAnthropic(r, opts)
+	case profile.OpenAIResponses:
+		return nil, fmt.Errorf("profile %q: dialect %s is not built yet (docs/design.md §11: openai-responses is L2)", rp.Name, rp.Dialect)
 	}
 	return nil, fmt.Errorf("profile %q: unknown dialect %q", rp.Name, rp.Dialect)
 }
@@ -131,4 +140,34 @@ func (p *provider) Model(_ context.Context, id string) (llm.LLM, error) {
 		return nil, fmt.Errorf("profile %q does not serve model %q", p.p.Name, id)
 	}
 	return p.model(id), nil
+}
+
+// openAnthropic opens an anthropic-dialect profile: Claude on the
+// first-party API, or on Vertex AI when the profile says platform:
+// vertex.
+func openAnthropic(r *profile.Resolved, opts Options) (Provider, error) {
+	rp := r.Profile
+	builtins, err := anthropic.BuiltinToolsFromNames(opts.BuiltinTools)
+	if err != nil {
+		return nil, fmt.Errorf("profile %q: %w", rp.Name, err)
+	}
+	cache := anthropic.DefaultCacheOptions()
+	if opts.PromptCache != nil {
+		cache = *opts.PromptCache
+	}
+	c, err := anthropic.New(anthropic.Options{
+		BaseURL:      r.BaseURL,
+		Credential:   r.Credential,
+		Vertex:       rp.Platform == profile.PlatformVertex,
+		HTTPClient:   opts.HTTPClient,
+		Retry:        opts.Retry,
+		Backend:      rp.BackendName(),
+		Region:       r.Params["region"],
+		Cache:        cache,
+		BuiltinTools: builtins,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("profile %q: %w", rp.Name, err)
+	}
+	return &provider{p: rp, model: c.Model}, nil
 }

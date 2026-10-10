@@ -29,8 +29,15 @@ The core module therefore requires the **lowest** genai version either
 product uses, so importing core-models never upgrades a product's genai
 underneath its own tests.
 
+The same rule sets `github.com/anthropics/anthropic-sdk-go` at **v1.43.0**,
+core-agent's version; mast is on v1.78.0. The `anthropic` dialect uses
+nothing newer.
+
 Google credentials come from `cloud.google.com/go/auth`, at the version
-genai already requires, so the core adds no module for them.
+genai already requires, so the core adds no module for them. Claude on
+Vertex AI uses those credentials too, rather than the SDK's `vertex`
+package, which would bring in `golang.org/x/oauth2` and
+`google.golang.org/api`.
 
 Exceptions are made for security fixes:
 

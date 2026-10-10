@@ -1,0 +1,8 @@
+{
+  "profile": "anthropic-vertex",
+  "model": "claude-haiku-4-5",
+  "base_path": "/v1/projects/{project}/locations/{region}/publishers/anthropic/models",
+  "request_path": "/v1/projects/PROJECT/locations/us-east5/publishers/anthropic/models/claude-haiku-4-5:streamRawPredict",
+  "recorded": "2026-10-10",
+  "server": "Claude Haiku 4.5 on Vertex AI, us-east5, through the anthropic dialect's Vertex rewrite; default prompt caching (system and history breakpoints)"
+}
