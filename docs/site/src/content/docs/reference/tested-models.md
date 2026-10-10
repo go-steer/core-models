@@ -126,8 +126,17 @@ What it shows:
   more. vLLM's bundled example template predates Google's fix for
   tool-calling loops. Switching to the model's own template (now the
   fixture's default) cut model calls from 851 to 382 across the run.
-  Vertex AI still made only 135. The rest of the gap is open; sampling
-  defaults are the next suspect.
+  Vertex AI still made only 135. What's left is repetition: 186 of
+  vLLM's 351 tool calls repeated an earlier call, against 9 of 112 on
+  Vertex AI, and two incidents held most of them. Without the repeats, the
+  two servers made about the same number of distinct calls. Sampling
+  doesn't explain it. vLLM was already sampling with Gemma's published
+  defaults (temperature 1.0, top_k 64, top_p 0.95), and lowering the
+  temperature to 0.3 made things worse: the model fell into generating
+  without end, and every repeat run of the four worst incidents timed out.
+  The likeliest remaining difference is how each server renders the
+  conversation, which we can't inspect on Vertex AI. mast now tells a model
+  inside the turn when it repeats a call, and ends the turn if it keeps going.
 
 Read these numbers carefully:
 
