@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.6.0 (2026-10-10)
+
 ### Added
 
 - **Gemini adapter (L5).** Package `dialect/gemini` serves Gemini on the Developer
