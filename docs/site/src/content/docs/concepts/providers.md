@@ -5,10 +5,11 @@ sidebar:
   order: 4
 ---
 
-core-models has **one adapter so far: OpenAI Chat Completions**. It has
-been run against a local Ollama server and Vertex AI's partner-model
-endpoint. Gemini and Claude keep working in mast and core-agent through
-their existing code until they move here.
+core-models has **three adapters: OpenAI Chat Completions, Anthropic
+Messages and Gemini**. Chat Completions has been run against Ollama, vLLM
+and Vertex AI's partner-model endpoint, and Messages against Claude on
+Vertex AI. mast and core-agent still reach Gemini and Claude through their
+own code until each switches to these adapters.
 
 ## Three wire formats, not one adapter per vendor
 
@@ -18,11 +19,38 @@ Most models are reachable through one of three API shapes:
 |---|---|---|
 | OpenAI Chat Completions | Vertex AI partner models, xAI, vLLM, SGLang, Ollama, llama.cpp, NVIDIA NIM, Groq, Together, Fireworks, DeepSeek, Mistral, any LiteLLM or OpenRouter endpoint | **built** (`dialect/openaichat`) |
 | OpenAI Responses | OpenAI, xAI | planned |
-| Anthropic Messages | Claude on Anthropic, Vertex AI and Bedrock | moves here from the products |
+| Anthropic Messages | Claude on Anthropic and Vertex AI; Bedrock later | **here** (`dialect/anthropic`), not yet adopted by the products |
 | genai | Gemini on the Developer API and Vertex AI | **here** (`dialect/gemini`), not yet adopted by the products |
 
 Chat Completions comes first because that one adapter reaches the most
 models, both managed and self-hosted.
+
+## Claude: one adapter from two
+
+mast and core-agent each had a Claude adapter, copied from one source and
+changed in different directions since. `dialect/anthropic` keeps mast's
+shape (option structs, usage in `usage.Detail`) and its per-model thinking
+request, and takes core-agent's prompt caching:
+
+- **Prompt caching is on by default** when a profile is opened: a
+  breakpoint on the system block, which caches the tool schemas with it,
+  and rolling breakpoints over the conversation tail, so a growing
+  transcript is re-read at the cache rate instead of re-billed every turn.
+  `coremodels.Options.PromptCache` changes the policy, including the
+  one-hour TTL, and `callctx.WithoutPromptCache` turns it off for a side
+  call whose prefix will never be sent again.
+- **Cache writes are recorded**, the one-hour share separately, so a meter
+  bills them at the write rate rather than as fresh input.
+- **Thinking follows the model's generation.** Models from
+  `claude-opus-4-7` on reject the older budget-carrying thinking request,
+  and the 4-5 generation rejects the newer adaptive one; the adapter sends
+  each the one it accepts.
+- **Retries happen in the HTTP client**, as for every dialect. The SDK's
+  own retries are off.
+- **Server-side tools are off** unless named in `coremodels.Options.Builtins`.
+
+Claude on Vertex AI uses core-models' own Google credentials rather than
+the SDK's Vertex package, so the library takes no OAuth2 dependency.
 
 ## Profiles instead of model-name prefixes
 
@@ -44,7 +72,7 @@ profiles are on the [profiles reference](/reference/profiles/).
 
 ## Tested against real servers
 
-Six servers are recorded and replayed offline on every pull request. Five
+Ten server and model pairs are recorded and replayed offline on every pull request, Claude on Vertex AI among them. Five
 Vertex AI partner models have also been through a tool-calling parity run
 against Claude, on mast's 31-incident Kubernetes corpus. GLM 5.2 and Kimi
 K2 Thinking match Claude on intent coverage. Llama 4 Maverick is left out

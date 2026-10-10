@@ -387,6 +387,57 @@ its config surface does not change.
 Claude on Bedrock rides on L4 through `anthropic-sdk-go/bedrock`, and Azure
 OpenAI rides on L1 and L2 through `openai-go/azure`. Both are P1, after L5.
 
+**As built (L4, 2026-10-10)**, in `dialect/anthropic`, where §3 places it:
+
+- **Caching is core-agent's, and on by default through `Open`.**
+  `coremodels.Options.PromptCache` nil means `DefaultCacheOptions` (system
+  block plus rolling history, 5-minute TTL), as core-agent defaults it.
+  mast's adapter only ever offered a system-block marker, off by default; a
+  product that wants that keeps it by passing its own policy.
+- **One usage record.** The adapter writes `usage.Detail` only, the
+  one-hour share in `CacheWrite1hTokens`. It does not write core-agent's
+  legacy `cache_creation_*` keys: a product that reads those bridges from
+  the Detail, as core-agent's profile path already does (L3'), so
+  `usage.Rebuild` over old logs is unaffected.
+- **Retries move to `retry`.** The SDK's retries are off
+  (`option.WithMaxRetries(0)`) and `retry.Transport` does the job, per Q7.
+  Anthropic's 529 "overloaded", which the SDK retried, joins the
+  transport's retryable statuses. core-agent's #935 reasoning against
+  stacking two layers still holds; there is now one.
+- **Vertex without the SDK's `vertex` package.** That package needs
+  `golang.org/x/oauth2` and `google.golang.org/api`. The adapter does its
+  URL and body rewrite as SDK middleware over `auth`'s ADC credential, and
+  the `anthropic-vertex` profile's `base_url` is the publisher prefix, so a
+  proxy in front of Vertex is an ordinary profile. Routing follows a new
+  profile field, `platform: vertex`, never the credential or the backend
+  name: a proxy may take a bearer token, and a backend may be renamed for
+  pricing alone. Bedrock (P1) gets its own value.
+- **Nothing reaches in from the environment.** `option.WithoutEnvironmentDefaults`
+  keeps `ANTHROPIC_BASE_URL`, `ANTHROPIC_API_KEY` and SDK config profiles
+  from overriding the profile.
+- **Env chains are profile syntax.** Params accept nested defaults
+  (`${ANTHROPIC_VERTEX_PROJECT_ID:-${GOOGLE_CLOUD_PROJECT}}`), which is how
+  the built-in carries both products' project and region fallbacks.
+- **Errors carry `HTTPStatus()`**, like `openaichat.APIError`, and still
+  unwrap to the SDK's `*anthropic.Error`. An error event after the stream
+  has started arrives on a 200; it reports the status its type stands for
+  (`overloaded_error` is 529) and `MidStream()`, because no transport can
+  replay a stream that has already delivered tokens.
+- **Thinking requests are fitted to what the API accepts.** The shape
+  follows the model's generation, parsed from either naming scheme, so
+  claude-opus-4, opus-4-1, sonnet-4 and 3-7-sonnet get `enabled` (mast's
+  list held only the 4-5 family); `budget_tokens` is kept within
+  1024 ≤ budget < `max_tokens`; with thinking on, temperature other than 1
+  and `top_k` are dropped and `top_p` raised to 0.95. Forced tool choice,
+  also refused with thinking, is left for the API to report. Signed
+  thinking blocks with empty text, what `display: omitted` returns, are
+  replayed.
+- **No default model and no tiers** in the library: which Claude a product
+  defaults to is product policy.
+- anthropic-sdk-go **v1.43.0**, core-agent's, the lower of the two
+  products' versions (rule 10); mast is on v1.78.0. Nothing the adapter
+  uses needs newer.
+
 ## 8. Self-hosted: tokens always, KV statistics opt-in (L3)
 
 These are the minimum and the extra from the ask, unchanged from mast
@@ -466,7 +517,7 @@ model fails at startup (R6) in both products.
 | **L2** | `openai-responses`, plus the `openai` and `xai` profiles | Encrypted-reasoning round-trip in the corpus; live tool loop against OpenAI and xAI |
 | **L3** | `kvmetrics` sampler with vLLM, SGLang and llama.cpp parsers; the `cached_tokens: unreliable` flag | mast `/usage` shows a session-scoped prefix-cache hit rate labeled fleet-level, against a real vLLM |
 | **L3'** | **core-agent adopts L1–L3** through `adkv1`: `models.Register` gains profile-backed providers, `config.json` gains a profile section, and `--provider` opens up | core-agent `--provider vllm --model …` drives a tool loop; existing Gemini and Anthropic paths unchanged |
-| **L4** | Extract Anthropic (first-party and Vertex), merging in core-agent's caching and sidecar; both products switch | Both products' toolwire and cache-accounting tests green on the library adapter, including mast's #352 measured-turn fixture and core-agent's 1-hour-TTL accounting; core-agent prompt caching available to mast |
+| **L4** | Extract Anthropic (first-party and Vertex), merging in core-agent's caching and sidecar; both products switch | Both products' toolwire and cache-accounting tests green on the library adapter, including mast's #352 measured-turn fixture and core-agent's 1-hour-TTL accounting; core-agent prompt caching available to mast. *Library side built 2026-10-10 (§7.3 "As built"); the products have not switched yet* |
 | **L5** | Extract Gemini and vertexcache, merging in core-agent's retry and cache handling; both products switch | mast's `IncludeServerSideToolInvocations` finding closed ([§12](#12-findings-from-the-inventory)); mast's #325 and core-agent's #902 eviction tests both green on the one verdict; core-agent's retry tests green on the library |
 | **L6** | Pricing merge ([§9](#9-pricing-l6)) | One catalog; mast's backend-shape tests and core-agent's 1-hour-TTL tests both pass against it |
 | **P1** | Bedrock Claude, Azure OpenAI, long-tail built-in profiles, NIM | Each has a tier map, catalog rows and a live smoke, or ships as an unvalidated template |

@@ -31,7 +31,7 @@ func yes() *bool { return new(true) }
 func no() *bool  { return new(false) }
 
 // builtins are the profiles core-models ships. Each is data plus, for
-// vertex-maas, a derive rule. Templates (vllm, sglang,
+// the Vertex AI ones, a derive rule for {host}. Templates (vllm, sglang,
 // openai-compatible) have no base_url: an operator extends them and
 // supplies one, and using one directly fails validation saying so.
 //
@@ -73,6 +73,43 @@ var builtins = map[string]Profile{
 			ResponseSchema: yes(), ReasoningEcho: yes(), ParallelToolCalls: yes(),
 			ServerTools: yes(), Streaming: yes(), ForcedToolChoice: yes(),
 		},
+	},
+	// Claude on the first-party Messages API. Any claude-* id is
+	// admitted; which one a tier means is product policy, not the
+	// library's, so no tiers are declared.
+	"anthropic": {
+		Name:       "anthropic",
+		Dialect:    Anthropic,
+		BaseURL:    "https://api.anthropic.com",
+		Auth:       auth.Config{Kind: auth.APIKey, Env: "ANTHROPIC_API_KEY"},
+		OpenModels: yes(),
+		Capabilities: Capabilities{
+			ResponseSchema: no(), ReasoningEcho: yes(), ParallelToolCalls: yes(),
+			ServerTools: yes(), Streaming: yes(),
+		},
+	},
+	// Claude on Vertex AI: the same Messages body, under ADC, at the
+	// publisher prefix (the adapter appends {model}:streamRawPredict).
+	// Project and region follow the env chain mast and core-agent
+	// already use, so the environment that drives Gemini on Vertex
+	// drives Claude too. us-east5 is where most Claude deployments live.
+	"anthropic-vertex": {
+		Name:     "anthropic-vertex",
+		Dialect:  Anthropic,
+		Platform: PlatformVertex,
+		BaseURL:  "https://{host}/v1/projects/{project}/locations/{region}/publishers/anthropic/models",
+		Params: map[string]string{
+			"project": "${ANTHROPIC_VERTEX_PROJECT_ID:-${GOOGLE_CLOUD_PROJECT}}",
+			"region":  "${CLOUD_ML_REGION:-${GOOGLE_CLOUD_LOCATION:-us-east5}}",
+		},
+		Auth:       auth.Config{Kind: auth.GoogleADC},
+		Backend:    "anthropic-vertex",
+		OpenModels: yes(),
+		Capabilities: Capabilities{
+			ResponseSchema: no(), ReasoningEcho: yes(), ParallelToolCalls: yes(),
+			ServerTools: yes(), Streaming: yes(),
+		},
+		derive: anthropicVertexHost,
 	},
 	"openai-compatible": {
 		Name:       "openai-compatible",
@@ -160,6 +197,18 @@ func vertexHost(params map[string]string) {
 	}
 }
 
+// anthropicVertexHost sets {host} for Claude on Vertex AI. Besides the
+// global and regional hosts vertex-maas uses, Claude is served from the
+// us and eu multi-region endpoints, which have hosts of their own.
+func anthropicVertexHost(params map[string]string) {
+	switch r := params["region"]; r {
+	case "us", "eu":
+		params["host"] = "aiplatform." + r + ".rep.googleapis.com"
+	default:
+		vertexHost(params)
+	}
+}
+
 // Builtin returns the built-in profile named name.
 func Builtin(name string) (Profile, bool) {
 	p, ok := builtins[name]
@@ -212,6 +261,9 @@ func Expand(p Profile) (Profile, error) {
 	}
 	if p.Dialect != "" {
 		out.Dialect = p.Dialect
+	}
+	if p.Platform != "" {
+		out.Platform = p.Platform
 	}
 	if p.BaseURL != "" {
 		out.BaseURL = p.BaseURL
