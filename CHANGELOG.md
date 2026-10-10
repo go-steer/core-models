@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Documentation
+
+- ***Tested models* narrows the Gemma 4 vLLM gap to repeated calls.** Over
+  half of vLLM's calls repeated an earlier one; on Vertex AI almost none
+  did. Lowering the sampling temperature made it worse, so sampling
+  defaults are ruled out.
+
 ### Fixed
 
 - **The Gemma 4 GKE fixture now uses the model's own chat template.** The
