@@ -471,6 +471,30 @@ model fails at startup (R6) in both products.
 | **L6** | Pricing merge ([§9](#9-pricing-l6)) | One catalog; mast's backend-shape tests and core-agent's 1-hour-TTL tests both pass against it |
 | **P1** | Bedrock Claude, Azure OpenAI, long-tail built-in profiles, NIM | Each has a tier map, catalog rows and a live smoke, or ships as an unvalidated template |
 
+**L5 status (2026-10-10).** The library half is done: package `gemini`
+(Developer API and Vertex AI), `gemini/vertexcache`, the `gemini` and
+`vertex` built-in profiles, and `retry.Policy.AfterSuccess` for core-agent's
+bare-400 rule. mast's #325 and core-agent's #902 eviction tests pass on the
+one verdict (`vertexcache.Gone`). Both products switching is still owed. What
+landed differently from the plan:
+- **The base model is ported, not wrapped.** Both products built on ADK's
+  `model/gemini`, which the core cannot import (D2). `gemini/model.go` is
+  that model on `llm` types, with ADK v2.5's stream aggregator. A response
+  with no candidates is an empty response rather than ADK's non-streaming
+  `"empty response"` error, so the products' string match on that error, and
+  mast's `TolerateEmptyChunks` option, are gone.
+- **core-agent's retry predicate became the transport's.** 429 and 503 are
+  already retried by package `retry`, with Retry-After visible. The bare 400
+  is `Policy.AfterSuccess`, consulted only when `callctx.PriorCallSucceeded`.
+  core-agent's process-wide token bucket does not move: it is product policy
+  over the transport, and the predicates stay exported (`gemini.IsTransient`,
+  `gemini.IsBareInvalidArgument`) for it.
+- **Grounding projection splits.** The ADK-free half,
+  `gemini.GroundingEvidence`, is here; the `session.Service` wrapper that
+  writes events stays with the products, since session events are ADK's.
+- **The positional schema normalizer (#532) is Anthropic-only** and moves
+  with L4; Gemini sends genai's own schema types.
+
 **Sync discipline from L0 on:** provider changes land in `core-models` and are
 consumed by version bump. Neither product edits a vendored copy. mast's
 `sibling-sync.md` gets one row per extracted package marking it
@@ -488,6 +512,9 @@ out at that point.
     needs a bundle that turns on `builtin_tools` and runs on the Developer API
     rather than Vertex.
   - Filed as [mast #505](https://github.com/go-steer/mast/issues/505); L5 closes it structurally.
+  - **Closed in the library (L5).** `gemini.Client.Model` sets the flag from
+    the backend; no caller passes it, so no caller can omit it. mast #505
+    closes when mast switches to the library adapter.
 - **mast model-support §4.1 and M3 are stale on ADK.** They describe
   `openaimodel` as Responses-only and propose wrapping it. ADK v2.5 has Chat
   Completions too, and D5 rules it out for the library either way.

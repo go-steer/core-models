@@ -26,6 +26,7 @@ package llm
 
 import (
 	"context"
+	"errors"
 	"iter"
 
 	"google.golang.org/genai"
@@ -77,3 +78,13 @@ type Response struct {
 	FinishReason            genai.FinishReason                          `json:"finishReason,omitempty"`
 	AvgLogprobs             float64                                     `json:"avgLogprobs,omitempty"`
 }
+
+// ErrEmptyResponse is what an adapter's error wraps when the model
+// answered with no usable content, no finish reason other than STOP,
+// and no error: the silent turn an agent loop otherwise waits on
+// forever (mast #220). Adapters wrap it with their own wording, so a
+// caller can recognise "the model said nothing" with errors.Is without
+// importing any adapter — a one-shot side question, for which an empty
+// answer is the answer, needs exactly that (core-agent's models
+// sentinel, generalised).
+var ErrEmptyResponse = errors.New("model returned no usable content")

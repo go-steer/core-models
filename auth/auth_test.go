@@ -201,3 +201,28 @@ func TestResolveGoogleADCFindsACredentialsFile(t *testing.T) {
 		t.Errorf("credential = %s", cred)
 	}
 }
+
+// TestAltEnvIsTriedInOrder: a key that goes by two names resolves from
+// either, the first set wins, and a miss names every variable tried.
+func TestAltEnvIsTriedInOrder(t *testing.T) {
+	c := auth.Config{Kind: auth.APIKey, Env: "GOOGLE_API_KEY", AltEnv: []string{"GEMINI_API_KEY"}}
+	for name, tc := range map[string]struct {
+		env  map[string]string
+		want string
+	}{
+		"first":  {map[string]string{"GOOGLE_API_KEY": "a", "GEMINI_API_KEY": "b"}, "a"},
+		"second": {map[string]string{"GEMINI_API_KEY": "b"}, "b"},
+	} {
+		cred, err := c.Resolve(context.Background(), auth.Options{Getenv: func(k string) string { return tc.env[k] }})
+		if err != nil || cred.Secret() != tc.want {
+			t.Errorf("%s: secret %q, err %v; want %q", name, cred.Secret(), err, tc.want)
+		}
+	}
+	_, err := c.Resolve(context.Background(), auth.Options{Getenv: func(string) string { return "" }})
+	if err == nil || !strings.Contains(err.Error(), "GOOGLE_API_KEY or GEMINI_API_KEY") {
+		t.Errorf("miss = %v", err)
+	}
+	if err := (auth.Config{Kind: auth.GoogleADC, AltEnv: []string{"X"}}).Validate(); err == nil {
+		t.Error("google_adc accepted alt_env")
+	}
+}

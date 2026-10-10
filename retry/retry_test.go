@@ -29,6 +29,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-steer/core-models/callctx"
 	"github.com/go-steer/core-models/retry"
 )
 
@@ -496,5 +497,78 @@ func TestTheHeaderTimeoutNeverCutsABody(t *testing.T) {
 	b, err := io.ReadAll(resp.Body)
 	if err != nil || string(b) != "abcde" {
 		t.Errorf("body = %q, %v; want the whole slow stream", b, err)
+	}
+}
+
+// bareBody is the 400 the AfterSuccess tests key on.
+const bareBody = `{"error":{"code":400,"message":"Request contains an invalid argument.","status":"INVALID_ARGUMENT"}}`
+
+func bare(w http.ResponseWriter) {
+	w.WriteHeader(400)
+	_, _ = io.WriteString(w, bareBody)
+}
+
+// TestAfterSuccessRetriesOnceForAServedSession is core-agent #1247 on
+// the shared transport: an ambiguous 400 is retried once, and only for
+// a session that has already been served.
+func TestAfterSuccessRetriesOnceForAServedSession(t *testing.T) {
+	var seen []string
+	isBare := func(status int, body []byte) bool {
+		seen = append(seen, string(body))
+		return status == 400 && strings.Contains(string(body), "Request contains an invalid argument.")
+	}
+	served := callctx.NewPriorSuccess()
+	served.Mark()
+
+	for name, tc := range map[string]struct {
+		ctx      context.Context
+		steps    []func(http.ResponseWriter)
+		requests int
+		final    int
+	}{
+		"served session: retried and recovered": {
+			callctx.WithPriorSuccess(context.Background(), served),
+			[]func(http.ResponseWriter){bare, status(200)}, 2, 200,
+		},
+		"served session: retried once, not twice": {
+			callctx.WithPriorSuccess(context.Background(), served),
+			[]func(http.ResponseWriter){bare, bare, status(200)}, 2, 400,
+		},
+		"first call of a session: not retried": {
+			callctx.WithPriorSuccess(context.Background(), callctx.NewPriorSuccess()),
+			[]func(http.ResponseWriter){bare, status(200)}, 1, 400,
+		},
+		"side call: not retried": {
+			callctx.AsSideCall(callctx.WithPriorSuccess(context.Background(), served), "btw"),
+			[]func(http.ResponseWriter){bare, status(200)}, 1, 400,
+		},
+		"a 400 that says what is wrong: not retried": {
+			callctx.WithPriorSuccess(context.Background(), served),
+			[]func(http.ResponseWriter){status(400), status(200)}, 1, 400,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := &script{steps: tc.steps}
+			srv := httptest.NewServer(s)
+			defer srv.Close()
+			var waits []time.Duration
+			p := policy(&waits)
+			p.AfterSuccess = isBare
+			resp, err := post(t, tc.ctx, p.Transport(nil), srv.URL, "{}")
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if len(s.bodies) != tc.requests || resp.StatusCode != tc.final {
+				t.Fatalf("sent %d requests, final status %d; want %d and %d", len(s.bodies), resp.StatusCode, tc.requests, tc.final)
+			}
+			if resp.StatusCode == 400 && len(body) == 0 {
+				t.Error("the 400 handed back lost its body to the AfterSuccess check")
+			}
+		})
+	}
+	if len(seen) == 0 || seen[0] != bareBody {
+		t.Errorf("AfterSuccess saw %q, want the response body", seen)
 	}
 }

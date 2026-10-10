@@ -12,7 +12,7 @@ Each phase names what it delivers and how it is judged done.
 | **L2** | OpenAI Responses; OpenAI and xAI profiles | planned |
 | **L3** | KV-cache statistics from self-hosted servers; core-agent adopts L1–L3 | planned |
 | **L4** | Anthropic adapter moves here, with the best of both products' versions | planned |
-| **L5** | Gemini adapter and Vertex context caching move here | planned |
+| **L5** | Gemini adapter and Vertex context caching move here | **in progress**: the `gemini` adapter, `gemini/vertexcache` and the `gemini` and `vertex` built-in profiles are here. Still owed: mast and core-agent switching to them |
 | **L6** | One price catalog for both products | planned |
 | **Later** | Claude on Bedrock, Azure OpenAI, more built-in profiles | planned |
 

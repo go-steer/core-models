@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+### Added
+
+- **Gemini adapter (L5).** Package `gemini` serves Gemini on the Developer
+  API and on Vertex AI as `llm.LLM`, built on genai with no ADK. It is the
+  extraction of mast's and core-agent's adapters:
+  - built-ins (`web_search`, `url_context`, `code_execution`) are off unless
+    asked for, and `include_server_side_tool_invocations` is set from the
+    backend, which closes mast #505 in the library;
+  - empty answers are retried once and then surface as an error wrapping
+    the new `llm.ErrEmptyResponse`;
+  - a cached turn whose Vertex context cache is gone is re-sent uncached,
+    and the cache manager is told.
+- **`gemini/vertexcache`:** the Vertex explicit-cache manager, with one
+  eviction verdict (`Gone`) for the manager and the adapter (mast #325,
+  core-agent #902), and core-agent's stop on content below the cache
+  minimum (#1067).
+- **Built-in profiles `gemini` and `vertex`.** `gemini` takes its key from
+  `GOOGLE_API_KEY` or `GEMINI_API_KEY`; `vertex` uses ADC, with the region
+  defaulting to `global`. Their backends are `gemini` and `vertex`, the
+  names both products price by. `coremodels.Options` gains `BuiltinTools`
+  and `Logf`.
+- **`retry.Policy.AfterSuccess`** retries an ambiguous response once for a
+  session that has already been served. Gemini uses it for Vertex AI's bare
+  400 `INVALID_ARGUMENT` (core-agent #898, #1247).
+- **`auth.Config.AltEnv`:** further variables to try for a key that goes by
+  more than one name.
+
+
 ### Documentation
 
 - ***Tested models* narrows the Gemma 4 vLLM gap to repeated calls.** Over

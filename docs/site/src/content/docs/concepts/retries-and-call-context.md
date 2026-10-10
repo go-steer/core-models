@@ -30,6 +30,7 @@ sees only what this layer gave up on.
 | **Too long** | If the server asks for more than `MaxHeaderDelay` (default one minute), the response is handed back without waiting. Retrying sooner than asked just earns another 429 |
 | **No answer** | An attempt that gets no response headers within `HeaderTimeout` (default five minutes) is abandoned and retried like a dropped connection. The limit never applies to the body, so a long stream is unaffected |
 | **Default budget** | Two retries, starting at one second |
+| **After a success** | `Policy.AfterSuccess` retries one more kind of response, once, and only for a session that has already been served (`WithPriorSuccess`) and is not a side call. The Gemini adapter uses it for Vertex AI's bare 400 `INVALID_ARGUMENT` ("Request contains an invalid argument." with no details): on a first call that is as likely a malformed request as a fault, but every time it was recorded on a served session it went away on retry |
 
 What happened is recorded on a per-call `retry.Record`. An adapter stamps
 it onto the response, so a retry shows up in the transcript and not only in

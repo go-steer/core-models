@@ -19,7 +19,7 @@ Most models are reachable through one of three API shapes:
 | OpenAI Chat Completions | Vertex AI partner models, xAI, vLLM, SGLang, Ollama, llama.cpp, NVIDIA NIM, Groq, Together, Fireworks, DeepSeek, Mistral, any LiteLLM or OpenRouter endpoint | **built** (`dialect/openaichat`) |
 | OpenAI Responses | OpenAI, xAI | planned |
 | Anthropic Messages | Claude on Anthropic, Vertex AI and Bedrock | moves here from the products |
-| genai | Gemini on the Developer API and Vertex AI | moves here from the products |
+| genai | Gemini on the Developer API and Vertex AI | **here** (the `gemini` package), not yet adopted by the products |
 
 Chat Completions comes first because that one adapter reaches the most
 models, both managed and self-hosted.

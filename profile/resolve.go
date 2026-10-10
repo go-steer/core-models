@@ -42,6 +42,38 @@ func no() *bool  { return new(false) }
 // time. An operator who has enabled it (vLLM with guided decoding, say)
 // declares it in their own profile.
 var builtins = map[string]Profile{
+	// Gemini on the Developer API and on Vertex AI, through the gemini
+	// adapter. Backends are named as mast's and core-agent's pricing
+	// catalogs key them, so a derived profile prices as Gemini whatever
+	// an operator calls it. No tiers: which Gemini is small, mid or
+	// frontier is product policy (mast's taskclass, core-agent's),
+	// and the two have not always agreed.
+	"gemini": {
+		Name:       "gemini",
+		Dialect:    Gemini,
+		Backend:    "gemini",
+		Auth:       auth.Config{Kind: auth.APIKey, Env: "GOOGLE_API_KEY", AltEnv: []string{"GEMINI_API_KEY"}},
+		OpenModels: yes(),
+		Capabilities: Capabilities{
+			ResponseSchema: yes(), ReasoningEcho: yes(), ParallelToolCalls: yes(),
+			ServerTools: yes(), Streaming: yes(), ForcedToolChoice: yes(),
+		},
+	},
+	"vertex": {
+		Name:    "vertex",
+		Dialect: Gemini,
+		Backend: "vertex",
+		Params: map[string]string{
+			"project": "${GOOGLE_CLOUD_PROJECT}",
+			"region":  "${GOOGLE_CLOUD_LOCATION:-global}",
+		},
+		Auth:       auth.Config{Kind: auth.GoogleADC},
+		OpenModels: yes(),
+		Capabilities: Capabilities{
+			ResponseSchema: yes(), ReasoningEcho: yes(), ParallelToolCalls: yes(),
+			ServerTools: yes(), Streaming: yes(), ForcedToolChoice: yes(),
+		},
+	},
 	"openai-compatible": {
 		Name:       "openai-compatible",
 		Dialect:    OpenAIChat,
@@ -150,6 +182,9 @@ func (p Profile) clone() Profile {
 	c.ExtraBody = maps.Clone(p.ExtraBody)
 	if p.Auth.Scopes != nil {
 		c.Auth.Scopes = slices.Clone(p.Auth.Scopes)
+	}
+	if p.Auth.AltEnv != nil {
+		c.Auth.AltEnv = slices.Clone(p.Auth.AltEnv)
 	}
 	return c
 }
