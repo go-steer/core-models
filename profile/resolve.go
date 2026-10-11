@@ -65,7 +65,10 @@ var builtins = map[string]Profile{
 		Backend: "vertex",
 		Params: map[string]string{
 			"project": "${GOOGLE_CLOUD_PROJECT}",
-			"region":  "${GOOGLE_CLOUD_LOCATION:-global}",
+			// mast's location chain: GOOGLE_CLOUD_REGION is the
+			// fallback its deployments set, and without it here a host
+			// had to patch the profile's params from outside.
+			"region": "${GOOGLE_CLOUD_LOCATION:-${GOOGLE_CLOUD_REGION:-global}}",
 		},
 		Auth:       auth.Config{Kind: auth.GoogleADC},
 		OpenModels: yes(),
