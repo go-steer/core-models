@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## v0.6.2 (2026-10-11)
+
+### Fixed
+
+- **The `vertex` profile falls back to `GOOGLE_CLOUD_REGION`** when
+  `GOOGLE_CLOUD_LOCATION` is unset, then to `global`. That is mast's
+  location order; without it, mast had to patch the profile's params.
+
 ## v0.6.1 (2026-10-10)
 
 ### Fixed

@@ -512,3 +512,28 @@ func TestDeclaredRates(t *testing.T) {
 		}
 	}
 }
+
+// TestVertexRegionChain: the gemini vertex profile takes its region from
+// GOOGLE_CLOUD_LOCATION, then GOOGLE_CLOUD_REGION (mast's fallback),
+// then global.
+func TestVertexRegionChain(t *testing.T) {
+	p, _ := profile.Builtin("vertex")
+	for name, tc := range map[string]struct {
+		env  map[string]string
+		want string
+	}{
+		"GOOGLE_CLOUD_LOCATION wins": {map[string]string{"GOOGLE_CLOUD_PROJECT": "acme", "GOOGLE_CLOUD_LOCATION": "europe-west1", "GOOGLE_CLOUD_REGION": "us-east5"}, "europe-west1"},
+		"GOOGLE_CLOUD_REGION next":   {map[string]string{"GOOGLE_CLOUD_PROJECT": "acme", "GOOGLE_CLOUD_REGION": "us-east5"}, "us-east5"},
+		"global by default":          {map[string]string{"GOOGLE_CLOUD_PROJECT": "acme"}, "global"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r, err := resolve(t, p, tc.env)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := r.Params["region"]; got != tc.want {
+				t.Errorf("region = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
