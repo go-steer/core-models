@@ -103,7 +103,17 @@ type Policy struct {
 	// as it generates. A non-streaming request receives headers only once
 	// the whole answer exists, so set it above the slowest complete
 	// answer you expect. Zero means no limit.
+	//
+	// It applies to streaming requests and to requests not marked
+	// either way; a request marked non-streaming (MarkUnary) uses
+	// UnaryHeaderTimeout instead, and WithHeaderTimeout overrides both
+	// for one call.
 	HeaderTimeout time.Duration
+	// UnaryHeaderTimeout is HeaderTimeout for a request an adapter
+	// marked non-streaming (MarkUnary). Such a request receives headers
+	// only once the whole answer exists, so this bounds total generation
+	// time and is longer than HeaderTimeout. Zero means no limit.
+	UnaryHeaderTimeout time.Duration
 	// Jitter is the fraction (0–1) of a computed backoff that is
 	// randomized, so callers that failed together do not retry
 	// together. Header-requested delays are never jittered.
@@ -145,8 +155,46 @@ func Default() Policy {
 		// otherwise hold the caller forever: observed on a Vertex AI
 		// partner model, one request waiting 28 minutes for headers.
 		HeaderTimeout: 5 * time.Minute,
-		Jitter:        0.25,
+		// A non-streaming answer arrives whole, so its wait for headers
+		// is its generation time: a large-context summary on Gemini can
+		// pass five minutes. Ten matches the Anthropic SDK's own default
+		// for a non-streaming request and still ends a request that will
+		// never be answered.
+		UnaryHeaderTimeout: 10 * time.Minute,
+		Jitter:             0.25,
 	}
+}
+
+type unaryKey struct{}
+
+// MarkUnary marks ctx as carrying a non-streaming request, so the
+// transport bounds its wait for headers with UnaryHeaderTimeout. An
+// adapter calls it on the context it sends a non-streaming request
+// with.
+func MarkUnary(ctx context.Context) context.Context {
+	return context.WithValue(ctx, unaryKey{}, true)
+}
+
+type headerTimeoutKey struct{}
+
+// WithHeaderTimeout overrides the header timeout for requests sent
+// under ctx, streaming or not; d <= 0 removes the limit. For a host call
+// it knows to be long, such as a compaction summary over a large
+// context.
+func WithHeaderTimeout(ctx context.Context, d time.Duration) context.Context {
+	return context.WithValue(ctx, headerTimeoutKey{}, d)
+}
+
+// headerTimeout is the wait for headers that applies to req.
+func (p Policy) headerTimeout(req *http.Request) time.Duration {
+	ctx := req.Context()
+	if d, ok := ctx.Value(headerTimeoutKey{}).(time.Duration); ok {
+		return d
+	}
+	if unary, _ := ctx.Value(unaryKey{}).(bool); unary {
+		return p.UnaryHeaderTimeout
+	}
+	return p.HeaderTimeout
 }
 
 // GaveUp says why a retried request stopped retrying with a failure
@@ -166,7 +214,9 @@ const (
 )
 
 // ErrNoResponse is the error of an attempt that received no response
-// headers within Policy.HeaderTimeout.
+// headers within its header timeout (Policy.HeaderTimeout,
+// UnaryHeaderTimeout, or a WithHeaderTimeout override). It does not
+// wrap context.Canceled: the attempt was abandoned, not the call.
 var ErrNoResponse = errors.New("retry: no response headers within the header timeout")
 
 // Record is what Transport did for the requests made under one call's
@@ -322,15 +372,16 @@ func (t *transport) afterSuccess(ctx context.Context, resp *http.Response, err e
 }
 
 // attempt sends req once, abandoning it if no response headers arrive
-// within HeaderTimeout. The deadline covers the wait for headers only;
+// within the header timeout that applies to it (see headerTimeout). The deadline covers the wait for headers only;
 // once they are in, the body reads under the caller's context alone.
 func (t *transport) attempt(req *http.Request) (*http.Response, error) {
-	if t.p.HeaderTimeout <= 0 {
+	limit := t.p.headerTimeout(req)
+	if limit <= 0 {
 		return t.base.RoundTrip(req)
 	}
 	ctx, cancel := context.WithCancel(req.Context())
 	var timedOut atomic.Bool
-	timer := time.AfterFunc(t.p.HeaderTimeout, func() {
+	timer := time.AfterFunc(limit, func() {
 		timedOut.Store(true)
 		cancel()
 	})
@@ -338,7 +389,11 @@ func (t *transport) attempt(req *http.Request) (*http.Response, error) {
 	if !timer.Stop() && timedOut.Load() {
 		cancel()
 		discard(resp)
-		return nil, fmt.Errorf("%w (%s): %w", ErrNoResponse, t.p.HeaderTimeout, err)
+		// The transport's error here is the context.Canceled our own
+		// timer caused. Wrap it as text only: a host classifying
+		// errors.Is(err, context.Canceled) as "the caller stopped this"
+		// would otherwise report a timeout as an operator cancel.
+		return nil, fmt.Errorf("%w (%s): %v", ErrNoResponse, limit, err)
 	}
 	if err != nil {
 		cancel()

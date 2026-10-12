@@ -635,3 +635,75 @@ func TestAfterSuccessNeverReadsASuccessfulBody(t *testing.T) {
 		t.Error("AfterSuccess was consulted for a 200")
 	}
 }
+
+// A header timeout is the transport giving up on an attempt, not the
+// caller cancelling: a host that reads errors.Is(err, context.Canceled)
+// as "the operator stopped this" must not see one (core-agent #1296).
+func TestAHeaderTimeoutIsNotACancel(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	defer srv.Close()
+	defer close(release)
+	var waits []time.Duration
+	p := policy(&waits)
+	p.MaxRetries = 0
+	p.HeaderTimeout = 20 * time.Millisecond
+	_, err := post(t, context.Background(), p.Transport(nil), srv.URL, "{}")
+	if !errors.Is(err, retry.ErrNoResponse) {
+		t.Fatalf("err = %v, want ErrNoResponse", err)
+	}
+	if errors.Is(err, context.Canceled) {
+		t.Errorf("err = %v reads as context.Canceled; a timeout would be reported as a cancel", err)
+	}
+}
+
+// A request marked non-streaming waits UnaryHeaderTimeout for headers,
+// since its answer arrives whole; an unmarked one keeps HeaderTimeout;
+// WithHeaderTimeout overrides both, and zero removes the limit.
+func TestTheHeaderTimeoutFollowsTheRequestKind(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-time.After(80 * time.Millisecond):
+			w.WriteHeader(200)
+		case <-r.Context().Done():
+		}
+	}))
+	defer srv.Close()
+	var waits []time.Duration
+	p := policy(&waits)
+	p.MaxRetries = 0
+	p.HeaderTimeout = 20 * time.Millisecond
+	p.UnaryHeaderTimeout = time.Second
+	for name, tc := range map[string]struct {
+		ctx     context.Context
+		timeout bool
+	}{
+		"unmarked keeps HeaderTimeout":        {context.Background(), true},
+		"unary gets UnaryHeaderTimeout":       {retry.MarkUnary(context.Background()), false},
+		"override shortens a unary call":      {retry.WithHeaderTimeout(retry.MarkUnary(context.Background()), 10*time.Millisecond), true},
+		"override lengthens a streaming call": {retry.WithHeaderTimeout(context.Background(), time.Second), false},
+		"zero override removes the limit":     {retry.WithHeaderTimeout(context.Background(), 0), false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			resp, err := post(t, tc.ctx, p.Transport(nil), srv.URL, "{}")
+			if resp != nil {
+				resp.Body.Close()
+			}
+			if got := errors.Is(err, retry.ErrNoResponse); got != tc.timeout {
+				t.Errorf("timed out = %v (%v), want %v", got, err, tc.timeout)
+			}
+		})
+	}
+}
+
+func TestDefaultBoundsAUnaryCallLongerThanAStream(t *testing.T) {
+	p := retry.Default()
+	if p.UnaryHeaderTimeout <= p.HeaderTimeout {
+		t.Errorf("UnaryHeaderTimeout %s <= HeaderTimeout %s; a whole non-streaming answer must be allowed longer", p.UnaryHeaderTimeout, p.HeaderTimeout)
+	}
+}

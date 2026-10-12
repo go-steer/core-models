@@ -496,3 +496,34 @@ func TestVertexExpressModeRefusesAProject(t *testing.T) {
 		t.Errorf("New = %v, want the key/project mix refused", err)
 	}
 }
+
+// TestANonStreamingCallWaitsTheUnaryHeaderTimeout: a non-streaming
+// generateContent sends no headers until the answer exists, so the
+// adapter marks it unary and the longer UnaryHeaderTimeout applies; a
+// streaming call to the same slow server is held to HeaderTimeout.
+func TestANonStreamingCallWaitsTheUnaryHeaderTimeout(t *testing.T) {
+	slow := func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-time.After(80 * time.Millisecond):
+		case <-r.Context().Done():
+			return
+		}
+		if strings.Contains(r.URL.Path, "stream") {
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = io.WriteString(w, "data: "+answer+"\n\n")
+			return
+		}
+		_, _ = io.WriteString(w, answer)
+	}
+	p := fastRetry()
+	p.MaxRetries = 0
+	p.HeaderTimeout = 20 * time.Millisecond
+	p.UnaryHeaderTimeout = time.Second
+	m := apiClient(t, &server{steps: []func(http.ResponseWriter, *http.Request){slow}}, gemini.Options{Retry: p}).Model("gemini-3.6-flash")
+	if _, err := collect(t, m, context.Background(), userReq("hi"), false); err != nil {
+		t.Errorf("non-streaming call failed under a 1s unary timeout: %v", err)
+	}
+	if _, err := collect(t, m, context.Background(), userReq("hi"), true); !errors.Is(err, retry.ErrNoResponse) {
+		t.Errorf("streaming call = %v, want ErrNoResponse under the 20ms header timeout", err)
+	}
+}
