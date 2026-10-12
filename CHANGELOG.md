@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+## v0.6.6 (2026-10-12)
+
+### Deprecated
+
+- **`adkv1`** is deprecated, and this is its last release. core-agent, its
+  only user, moved to ADK v2 (go-steer/core-agent#1291) and to `adkv2`
+  (#1296). The module's `go.mod` carries a `Deprecated:` comment, so
+  `go get` and pkg.go.dev flag it. Projects on `google.golang.org/adk` v1
+  should move to ADK v2 and `adkv2`. The directory goes in a later
+  cleanup.
+
+### Documentation
+
+- **Roadmap and design status:** L1, L4 and L5 are done. Both mast (#510,
+  #521) and core-agent (#1294, #1296) run on the library. L3 has its
+  core-agent adoption done; its KV-cache sampler is still owed.
+
 ## v0.6.5 (2026-10-12)
 
 ### Fixed

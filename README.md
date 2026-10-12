@@ -27,7 +27,7 @@ Completions, is next. See the
 | Module | For |
 |---|---|
 | `github.com/go-steer/core-models` | The contract (`llm`), the usage record (`usage`), and later the providers. Never imports ADK |
-| `github.com/go-steer/core-models/adkv1` | Projects on `google.golang.org/adk` v1 |
+| `github.com/go-steer/core-models/adkv1` | Projects on `google.golang.org/adk` v1. **Deprecated** since v0.6.6, its last release; move to ADK v2 and `adkv2` |
 | `github.com/go-steer/core-models/adkv2` | Projects on `google.golang.org/adk/v2` |
 
 ## License

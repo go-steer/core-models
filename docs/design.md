@@ -1,7 +1,9 @@
 # core-models: one provider layer for mast and core-agent
 
-**Status:** design, 2026-10-08. The decisions in [§2](#2-settled-decisions) were
-settled with the maintainer on that date. Everything else is the proposed shape,
+**Status:** design, 2026-10-08; L0–L1 and L3'–L5 built by 2026-10-12, with
+mast (#510, #521) and core-agent (#1294, #1296) running on the library, and
+`adkv1` deprecated since v0.6.6. The decisions in [§2](#2-settled-decisions) were
+settled with the maintainer on 2026-10-08. Everything else is the proposed shape,
 and it changes as the open questions in [§13](#13-open-questions) are answered.
 
 **Inputs:**
@@ -55,7 +57,7 @@ import it. Product policy stays in each product.
 | # | Decision | Rationale |
 |---|---|---|
 | D1 | **Repo `github.com/go-steer/core-models`** | Matches the `core-agent` / `core-tui` family and is neutral to both consumers. |
-| D2 | **The core module depends on genai and vendor SDKs only, never ADK. Two nested shim modules, `adkv1` and `adkv2`, adapt it to each ADK major.** | mast is on `adk/v2` and core-agent is on `adk` v1.7. Their `model.LLM`, `LLMRequest` and `LLMResponse` are identical in fields but are distinct Go types. The shims are field copies. The `adkv1` shim is deleted whenever core-agent moves to ADK v2; that migration is a separate track and does not block this work. |
+| D2 | **The core module depends on genai and vendor SDKs only, never ADK. Two nested shim modules, `adkv1` and `adkv2`, adapt it to each ADK major.** | mast is on `adk/v2` and core-agent is on `adk` v1.7. Their `model.LLM`, `LLMRequest` and `LLMResponse` are identical in fields but are distinct Go types. The shims are field copies. The `adkv1` shim is deleted whenever core-agent moves to ADK v2; that migration is a separate track and does not block this work. *core-agent moved to ADK v2 (core-agent #1291) and to `adkv2` (#1296); `adkv1` is deprecated in v0.6.6, its last release, and the directory goes in a later cleanup.* |
 | D3 | **Pricing moves into the library, in a later phase (L6)** | The two catalogs diverged in opposite directions: mast keys rates by (backend, model), and core-agent has the 1-hour cache-write rate. They are merged once, after the adapters land. Until then each repo prices new providers through its own catalog's override layer. |
 | D4 | **New providers first, then extract the existing ones** | New providers are the requirement. The contract is still designed against the existing Gemini and Anthropic adapters ([§4](#4-the-contract)), so extracting them later is a move, not a redesign. |
 | D5 | **The library does not use ADK's `model/openaimodel`** *(amended in L1: `openai-chat` is written on net/http and its own wire types, not openai-go; see §7.1)* | It now speaks both Responses and Chat Completions, but it exists only in ADK v2, so core-agent cannot use it (D2). The OpenAI dialects are written on `openai-go/v3` directly. That module is already in mast's module graph through ADK v2. |
@@ -516,9 +518,9 @@ model fails at startup (R6) in both products.
 | **L1** | `openai-chat` and the profiles `openai-compatible`, `vertex-maas`, `vllm`, `sglang`, `ollama` | Conformance corpus green offline. **mast adopts it:** mast's M1 profile wiring resolves `--provider <profile>`, and a vLLM profile runs the triage bundle end to end with tokens per turn and `$—`. A live run against Vertex MaaS (gpt-oss-20b) and a local Ollama |
 | **L2** | `openai-responses`, plus the `openai` and `xai` profiles | Encrypted-reasoning round-trip in the corpus; live tool loop against OpenAI and xAI |
 | **L3** | `kvmetrics` sampler with vLLM, SGLang and llama.cpp parsers; the `cached_tokens: unreliable` flag | mast `/usage` shows a session-scoped prefix-cache hit rate labeled fleet-level, against a real vLLM |
-| **L3'** | **core-agent adopts L1–L3** through `adkv1`: `models.Register` gains profile-backed providers, `config.json` gains a profile section, and `--provider` opens up | core-agent `--provider vllm --model …` drives a tool loop; existing Gemini and Anthropic paths unchanged |
-| **L4** | Extract Anthropic (first-party and Vertex), merging in core-agent's caching and sidecar; both products switch | Both products' toolwire and cache-accounting tests green on the library adapter, including mast's #352 measured-turn fixture and core-agent's 1-hour-TTL accounting; core-agent prompt caching available to mast. *Library side built 2026-10-10 (§7.3 "As built"); the products have not switched yet* |
-| **L5** | Extract Gemini and vertexcache, merging in core-agent's retry and cache handling; both products switch | mast's `IncludeServerSideToolInvocations` finding closed ([§12](#12-findings-from-the-inventory)); mast's #325 and core-agent's #902 eviction tests both green on the one verdict; core-agent's retry tests green on the library |
+| **L3'** | **core-agent adopts L1–L3** through `adkv1`: `models.Register` gains profile-backed providers, `config.json` gains a profile section, and `--provider` opens up | core-agent `--provider vllm --model …` drives a tool loop; existing Gemini and Anthropic paths unchanged. *Done 2026-10-10 (core-agent #1294), before L2 and L3, which are still owed* |
+| **L4** | Extract Anthropic (first-party and Vertex), merging in core-agent's caching and sidecar; both products switch | Both products' toolwire and cache-accounting tests green on the library adapter, including mast's #352 measured-turn fixture and core-agent's 1-hour-TTL accounting; core-agent prompt caching available to mast. *Done 2026-10-12: library side 2026-10-10 (§7.3 "As built"); mast #521 and core-agent #1296 switched, with judged-eval and live parity* |
+| **L5** | Extract Gemini and vertexcache, merging in core-agent's retry and cache handling; both products switch | mast's `IncludeServerSideToolInvocations` finding closed ([§12](#12-findings-from-the-inventory)); mast's #325 and core-agent's #902 eviction tests both green on the one verdict; core-agent's retry tests green on the library. *Done 2026-10-12 (mast #521, core-agent #1296)* |
 | **L6** | Pricing merge ([§9](#9-pricing-l6)) | One catalog; mast's backend-shape tests and core-agent's 1-hour-TTL tests both pass against it |
 | **P1** | Bedrock Claude, Azure OpenAI, long-tail built-in profiles, NIM | Each has a tier map, catalog rows and a live smoke, or ships as an unvalidated template |
 
@@ -526,7 +528,7 @@ model fails at startup (R6) in both products.
 (Developer API and Vertex AI), `dialect/gemini/vertexcache`, the `gemini` and
 `vertex` built-in profiles, and `retry.Policy.AfterSuccess` for core-agent's
 bare-400 rule. mast's #325 and core-agent's #902 eviction tests pass on the
-one verdict (`vertexcache.Gone`). Both products switching is still owed. What
+one verdict (`vertexcache.Gone`). Both products switched on 2026-10-12 (mast #521, core-agent #1296). What
 landed differently from the plan:
 - **The base model is ported, not wrapped.** Both products built on ADK's
   `model/gemini`, which the core cannot import (D2). `dialect/gemini/model.go` is
