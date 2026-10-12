@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## v0.6.5 (2026-10-12)
+
+### Fixed
+
+- **`auth.ErrNoADC` survives `profile.Resolve` and `coremodels.Open`.**
+  `profile.Resolve` wrapped the auth error with `%v`, so
+  `errors.Is(err, auth.ErrNoADC)` was false on the path hosts actually
+  call. Found by core-agent. Every error `profile.Resolve` passes through
+  is now wrapped with `%w`; the messages are unchanged.
+
 ## v0.6.4 (2026-10-12)
 
 ### Fixed

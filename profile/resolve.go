@@ -407,7 +407,7 @@ func Resolve(ctx context.Context, p Profile, opts Options) (*Resolved, error) {
 	for k, v := range p.Params {
 		ev, err := expandEnv(v, getenv)
 		if err != nil {
-			return nil, fail("params.%s: %v", k, err)
+			return nil, fail("params.%s: %w", k, err)
 		}
 		params[k] = ev
 	}
@@ -416,19 +416,19 @@ func Resolve(ctx context.Context, p Profile, opts Options) (*Resolved, error) {
 	}
 	base, err := expandEnv(p.BaseURL, getenv)
 	if err != nil {
-		return nil, fail("base_url: %v", err)
+		return nil, fail("base_url: %w", err)
 	}
 	base = placeholderRE.ReplaceAllStringFunc(base, func(m string) string {
 		return params[m[1:len(m)-1]]
 	})
 	if base != "" {
 		if err := checkURL(base); err != nil {
-			return nil, fail("base_url resolves to %v", err)
+			return nil, fail("base_url resolves to %w", err)
 		}
 	}
 	metrics, err := expandEnv(p.MetricsURL, getenv)
 	if err != nil {
-		return nil, fail("metrics_url: %v", err)
+		return nil, fail("metrics_url: %w", err)
 	}
 
 	authOpts := opts.Auth
@@ -437,7 +437,7 @@ func Resolve(ctx context.Context, p Profile, opts Options) (*Resolved, error) {
 	}
 	cred, err := p.Auth.Resolve(ctx, authOpts)
 	if err != nil {
-		return nil, fail("%v", err)
+		return nil, fail("%w", err)
 	}
 	return &Resolved{Profile: p, Params: params, BaseURL: strings.TrimRight(base, "/"), MetricsURL: metrics, Credential: cred}, nil
 }

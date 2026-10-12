@@ -17,6 +17,7 @@ package coremodels_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -389,4 +390,27 @@ func TestOpenRoutesClaudeByPlatform(t *testing.T) {
 			t.Errorf("Authorization = %q", s.bearer)
 		}
 	})
+}
+
+// TestOpenKeepsTheAuthSentinel: errors.Is(err, auth.ErrNoADC) holds on
+// coremodels.Open's error for a Google-credentialed profile, so a host
+// can offer its own remedy without matching text.
+func TestOpenKeepsTheAuthSentinel(t *testing.T) {
+	for _, name := range []string{"vertex", "anthropic-vertex", "vertex-maas"} {
+		p, _ := profile.Builtin(name)
+		_, err := coremodels.Open(context.Background(), p, coremodels.Options{Resolve: profile.Options{
+			Getenv: func(k string) string {
+				if k == "GOOGLE_CLOUD_PROJECT" {
+					return "acme"
+				}
+				return ""
+			},
+			Auth: auth.Options{DetectGoogle: func(context.Context, []string) (auth.TokenSource, error) {
+				return nil, errors.New("no credentials file")
+			}},
+		}})
+		if !errors.Is(err, auth.ErrNoADC) {
+			t.Errorf("%s: Open = %v, want errors.Is ErrNoADC", name, err)
+		}
+	}
 }
