@@ -59,6 +59,21 @@ var builtins = map[string]Profile{
 			ServerTools: yes(), Streaming: yes(), ForcedToolChoice: yes(),
 		},
 	},
+	// Vertex express mode: Gemini on Vertex AI with an API key and no
+	// project, the key Google issues for express mode. Same backend
+	// name as vertex, so it prices from the same rows.
+	"vertex-express": {
+		Name:       "vertex-express",
+		Dialect:    Gemini,
+		Backend:    "vertex",
+		Platform:   PlatformVertex,
+		Auth:       auth.Config{Kind: auth.APIKey, Env: "GOOGLE_API_KEY"},
+		OpenModels: yes(),
+		Capabilities: Capabilities{
+			ResponseSchema: yes(), ReasoningEcho: yes(), ParallelToolCalls: yes(),
+			ServerTools: yes(), Streaming: yes(), ForcedToolChoice: yes(),
+		},
+	},
 	"vertex": {
 		Name:    "vertex",
 		Dialect: Gemini,

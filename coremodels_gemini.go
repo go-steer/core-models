@@ -55,11 +55,15 @@ func openGemini(ctx context.Context, r *profile.Resolved, opts Options) (Provide
 	switch r.Credential.Kind() {
 	case auth.APIKey:
 		gopts.Backend, gopts.APIKey = genai.BackendGeminiAPI, r.Credential.Secret()
+		if rp.Platform == profile.PlatformVertex {
+			// Vertex express mode: a key, no project or region.
+			gopts.Backend = genai.BackendVertexAI
+		}
 	case auth.GoogleADC:
 		gopts.Backend, gopts.Credential = genai.BackendVertexAI, r.Credential
 		gopts.Project, gopts.Location = r.Params["project"], r.Params["region"]
 	default:
-		return nil, fmt.Errorf("profile %q: dialect gemini authenticates with api_key (the Developer API) or google_adc (Vertex AI), not %s", rp.Name, r.Credential.Kind())
+		return nil, fmt.Errorf("profile %q: dialect gemini authenticates with api_key (the Developer API, or Vertex express mode with platform: vertex) or google_adc (Vertex AI), not %s", rp.Name, r.Credential.Kind())
 	}
 	c, err := gemini.New(ctx, gopts)
 	if err != nil {
