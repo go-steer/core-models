@@ -60,7 +60,9 @@ type Options struct {
 	// Backend is genai.BackendGeminiAPI or genai.BackendVertexAI.
 	Backend genai.Backend
 
-	// APIKey authenticates the Gemini Developer API.
+	// APIKey authenticates the Gemini Developer API. On Vertex AI it
+	// selects express mode: the key alone, with no Project, Location or
+	// Credential (Google routes the key to its project).
 	APIKey string
 
 	// Project and Location address Vertex AI. "global" is a valid
@@ -136,8 +138,21 @@ func New(ctx context.Context, opts Options) (*Client, error) {
 			opts.BackendName = "gemini"
 		}
 	case genai.BackendVertexAI:
+		if opts.APIKey != "" {
+			// Vertex express mode: an API key and nothing else. Google
+			// routes the key to its project, so a project or location
+			// here would be ignored at best and contradict the key at
+			// worst; refuse the mix rather than guess which one wins.
+			if opts.Project != "" || opts.Location != "" || opts.Credential != nil {
+				return nil, errors.New("gemini: Vertex express mode takes an API key alone, without a project, location or credential")
+			}
+			if opts.BackendName == "" {
+				opts.BackendName = "vertex"
+			}
+			break
+		}
 		if opts.Project == "" || opts.Location == "" {
-			return nil, errors.New("gemini: Vertex AI needs a project and a location")
+			return nil, errors.New("gemini: Vertex AI needs a project and a location, or an API key (express mode)")
 		}
 		if opts.Credential == nil {
 			cred, err := auth.Config{Kind: auth.GoogleADC}.Resolve(ctx, auth.Options{})
@@ -166,9 +181,10 @@ func New(ctx context.Context, opts Options) (*Client, error) {
 		rt = http.DefaultTransport
 	}
 	rt = mergeHeaders{base: rt}
-	// Vertex authenticates per request with a bearer token. The
-	// Developer API key is a header genai sets itself.
-	if opts.Backend == genai.BackendVertexAI {
+	// Vertex authenticates per request with a bearer token. An API key
+	// (the Developer API, or Vertex express mode) is a header genai sets
+	// itself.
+	if opts.Credential != nil {
 		rt = opts.Credential.BearerTransport(rt)
 	}
 	policy := retry.Default()
@@ -185,7 +201,7 @@ func New(ctx context.Context, opts Options) (*Client, error) {
 	if opts.BaseURL != "" {
 		cc.HTTPOptions.BaseURL = opts.BaseURL
 	}
-	if opts.Backend == genai.BackendGeminiAPI {
+	if opts.APIKey != "" {
 		cc.APIKey = opts.APIKey
 	} else {
 		// With an HTTPClient supplied and no Credentials or key, genai

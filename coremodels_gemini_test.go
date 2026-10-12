@@ -135,3 +135,27 @@ func TestOpenGeminiWithBuiltinTools(t *testing.T) {
 		})
 	}
 }
+
+// TestOpenVertexExpress: the vertex-express profile is Gemini on Vertex
+// AI by API key alone (core-models #29). The call carries the key and no
+// bearer token, goes to the project-less publisher path, and prices
+// under vertex like the ADC profile.
+func TestOpenVertexExpress(t *testing.T) {
+	srv, calls := geminiServer(t)
+	p, err := coremodels.Open(context.Background(), profile.Profile{Name: "vxe", Extends: "vertex-express", BaseURL: srv.URL},
+		opts(map[string]string{"GOOGLE_API_KEY": "express-key"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := callOnce(t, p, "gemini-3.6-flash")
+	c := (*calls)[0]
+	if c.key != "express-key" || c.auth != "" || strings.Contains(c.path, "/projects/") || !strings.Contains(c.path, "publishers/google/models/gemini-3.6-flash:generateContent") {
+		t.Errorf("express call = %+v", c)
+	}
+	if d, _ := usage.FromMetadata(r.CustomMetadata); p.Backend() != "vertex" || d.Backend != "vertex" {
+		t.Errorf("backend %q, detail %+v", p.Backend(), d)
+	}
+	if _, err := coremodels.Open(context.Background(), profile.Profile{Name: "vxe", Extends: "vertex-express"}, opts(nil)); err == nil || !strings.Contains(err.Error(), "GOOGLE_API_KEY") {
+		t.Errorf("Open with no key = %v, want GOOGLE_API_KEY named", err)
+	}
+}

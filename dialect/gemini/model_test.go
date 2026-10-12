@@ -457,3 +457,42 @@ func TestUnreportedBucketsStayNil(t *testing.T) {
 		t.Errorf("detail = %+v; want every unreported bucket nil", d)
 	}
 }
+
+// TestVertexExpressModeSendsTheKeyAndNoProject is core-models #29: on
+// Vertex AI, an API key alone is express mode. The request goes to the
+// project-less publisher path with the key header and no bearer token.
+func TestVertexExpressModeSendsTheKeyAndNoProject(t *testing.T) {
+	s := &server{steps: []func(http.ResponseWriter, *http.Request){jsonReply(200, answer)}}
+	srv := httptest.NewServer(s)
+	t.Cleanup(srv.Close)
+	c, err := gemini.New(context.Background(), gemini.Options{
+		Backend: genai.BackendVertexAI, APIKey: "express-key", BaseURL: srv.URL, Retry: fastRetry(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := collect(t, c.Model("gemini-3.6-flash"), context.Background(), userReq("hi"), false); err != nil {
+		t.Fatal(err)
+	}
+	h, path := s.headers[0], s.paths[0]
+	if h.Get("x-goog-api-key") != "express-key" {
+		t.Error("the API key header is missing")
+	}
+	if h.Get("Authorization") != "" {
+		t.Errorf("Authorization = %q; express mode sends no bearer token", h.Get("Authorization"))
+	}
+	if strings.Contains(path, "/projects/") || !strings.Contains(path, "publishers/google/models/gemini-3.6-flash:generateContent") {
+		t.Errorf("path = %q, want the project-less Vertex publisher path", path)
+	}
+}
+
+// TestVertexExpressModeRefusesAProject: a key and a project together are
+// ambiguous, so New refuses rather than guess which wins.
+func TestVertexExpressModeRefusesAProject(t *testing.T) {
+	_, err := gemini.New(context.Background(), gemini.Options{
+		Backend: genai.BackendVertexAI, APIKey: "k", Project: "p", Location: "us-central1",
+	})
+	if err == nil || !strings.Contains(err.Error(), "express mode") {
+		t.Errorf("New = %v, want the key/project mix refused", err)
+	}
+}

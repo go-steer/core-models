@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## v0.6.3 (2026-10-12)
+
+### Added
+
+- **Vertex express mode** (#29): Gemini on Vertex AI with an API key and
+  no project. `dialect/gemini.New` takes an `APIKey` on the Vertex backend
+  (alone; a project, location or credential beside it is refused), and an
+  `api_key` profile with `platform: vertex` routes there. The new built-in
+  `vertex-express` reads `GOOGLE_API_KEY` and prices as `vertex`. mast
+  supported this through genai's environment selection and carried a
+  bridge after switching to the library; that bridge can go.
+
 ## v0.6.2 (2026-10-11)
 
 ### Fixed
