@@ -1,3 +1,8 @@
+// Deprecated: core-agent, this shim's only user, moved to ADK v2
+// (go-steer/core-agent#1291) and now imports
+// github.com/go-steer/core-models/adkv2. adkv1 receives no further
+// releases; projects on google.golang.org/adk v1 should move to ADK v2
+// and adkv2.
 module github.com/go-steer/core-models/adkv1
 
 go 1.26.6
@@ -5,7 +10,7 @@ go 1.26.6
 toolchain go1.26.9
 
 require (
-	github.com/go-steer/core-models v0.6.5
+	github.com/go-steer/core-models v0.6.6
 	google.golang.org/adk v1.7.0
 	google.golang.org/genai v1.57.0
 )

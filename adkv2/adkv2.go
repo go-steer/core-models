@@ -13,8 +13,9 @@
 // limitations under the License.
 
 // Package adkv2 adapts core-models to the ADK major its import path
-// names. mast is on ADK v2 and core-agent on ADK v1; there is one
-// adapter package per major, and they are the same file with the
+// names. mast and core-agent are both on ADK v2; adkv1, for ADK v1, is
+// deprecated and receives no further releases. There is one adapter
+// package per major, and they are the same file with the
 // import path changed — dev/ci/presubmits/shims-lockstep.sh holds them
 // to that, so edit this one and regenerate the other with --fix.
 //

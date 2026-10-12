@@ -7,12 +7,12 @@ Each phase names what it delivers and how it is judged done.
 
 | Phase | Delivers | Status |
 |---|---|---|
-| **L0** | Repository, CI, the `llm` contract, the `usage` record, the `adkv1` and `adkv2` adapter modules | **done** |
-| **L1** | OpenAI Chat Completions, serving the built-in profiles for Vertex AI partner models, vLLM, SGLang, Ollama and any OpenAI-compatible endpoint; mast adopts it | **in progress**: the adapter, `coremodels.Open` and a recorded corpus are done (v0.1.0), and mast adopted it (mast #510). Still owed: a judged live run at tool-calling parity with Claude, and a vLLM deployment end to end |
+| **L0** | Repository, CI, the `llm` contract, the `usage` record, the `adkv1` and `adkv2` adapter modules | **done**. `adkv1` is deprecated since v0.6.6: both products are on ADK v2 and `adkv2` |
+| **L1** | OpenAI Chat Completions, serving the built-in profiles for Vertex AI partner models, vLLM, SGLang, Ollama and any OpenAI-compatible endpoint; mast adopts it | **done**: the adapter, `coremodels.Open` and a recorded corpus (v0.1.0); mast adopted it (mast #510); GLM 5.2 holds tool-calling parity with Claude on mast's judged corpus over three runs; vLLM on GKE runs end to end (`deploy/gke-vllm`). See [tested models](/reference/tested-models/) |
 | **L2** | OpenAI Responses; OpenAI and xAI profiles | planned |
-| **L3** | KV-cache statistics from self-hosted servers; core-agent adopts L1–L3 | planned |
-| **L4** | Anthropic adapter moves here, with the best of both products' versions | **in progress**: the `dialect/anthropic` adapter and the `anthropic` and `anthropic-vertex` built-in profiles are here. Still owed: mast and core-agent switching to them |
-| **L5** | Gemini adapter and Vertex context caching move here | **in progress**: the `dialect/gemini` adapter, `dialect/gemini/vertexcache` and the `gemini` and `vertex` built-in profiles are here. Still owed: mast and core-agent switching to them |
+| **L3** | KV-cache statistics from self-hosted servers; core-agent adopts L1–L3 | **in progress**: core-agent adopted provider profiles (core-agent #1294, ahead of L2). Still owed: the opt-in KV-cache sampler |
+| **L4** | Anthropic adapter moves here, with the best of both products' versions | **done**: `dialect/anthropic` and the `anthropic` and `anthropic-vertex` profiles (v0.6.0); mast (mast #521) and core-agent (core-agent #1296) both run on it, with judged-eval and live parity against their previous adapters. Claude on the first-party API is offline-tested only |
+| **L5** | Gemini adapter and Vertex context caching move here | **done**: `dialect/gemini`, `dialect/gemini/vertexcache` and the `gemini`, `vertex` and `vertex-express` profiles (v0.6.0–v0.6.3); mast and core-agent both run on it, with judged-eval and live parity, including web search and the Vertex context cache |
 | **L6** | One price catalog for both products | planned |
 | **Later** | Claude on Bedrock, Azure OpenAI, more built-in profiles | planned |
 
