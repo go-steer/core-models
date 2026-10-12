@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+## v0.6.4 (2026-10-12)
+
+### Fixed
+
+All three were found by core-agent's review of its switch to the library
+(go-steer/core-agent#1296).
+
+- **A header timeout no longer reads as a cancel.** `ErrNoResponse` used to
+  wrap the `context.Canceled` its own timer caused, so a host checking
+  `errors.Is(err, context.Canceled)` reported a timeout as an operator
+  stop. The cause is now kept as text only.
+- **A non-streaming call is no longer capped at five minutes.** It gets no
+  headers until the whole answer exists, so `HeaderTimeout` was really
+  capping generation time. A large-context Gemini summary hit it. The
+  Gemini and OpenAI-compatible adapters now mark non-streaming requests
+  (`retry.MarkUnary`), and those wait the new
+  `Policy.UnaryHeaderTimeout` (default ten minutes, the Anthropic SDK's
+  own non-streaming default). The Anthropic adapter always streams on the
+  wire, so it's unaffected. `retry.WithHeaderTimeout(ctx, d)` overrides
+  the limit for one call. A `Policy` built by hand rather than from
+  `Default()` leaves `UnaryHeaderTimeout` at zero, which means no limit.
+- **Vertex requests send the quota project again.** genai's transport
+  set `X-Goog-User-Project` from the ADC quota project (or
+  `GOOGLE_CLOUD_QUOTA_PROJECT`), and core-models' `BearerTransport` didn't.
+  A user credential with a quota project was billed and quota-checked
+  against the wrong project. It is read once, as Google's transport
+  does, and never overrides a header the caller set.
+
+### Added
+
+- **`auth.ErrNoADC`** (#30): missing Application Default Credentials can
+  be detected with `errors.Is`. The message text is unchanged.
+
 ## v0.6.3 (2026-10-12)
 
 ### Added

@@ -106,6 +106,21 @@ type TokenSource interface {
 	Token(ctx context.Context) (string, error)
 }
 
+// QuotaProjecter is implemented by a TokenSource whose credentials name
+// a quota project: the project Google bills and quota-checks requests
+// against when it differs from the credentials' own (user ADC with
+// `gcloud auth application-default set-quota-project`, or
+// GOOGLE_CLOUD_QUOTA_PROJECT). Optional.
+type QuotaProjecter interface {
+	QuotaProject(ctx context.Context) (string, error)
+}
+
+// ErrNoADC is the error Resolve wraps when GoogleADC finds no
+// Application Default Credentials, so a host can offer its own remedy
+// (`gcloud auth application-default login`) with errors.Is rather than
+// by matching text.
+var ErrNoADC = errors.New("auth: no Google Application Default Credentials")
+
 // Options adjusts resolution. The zero value reads the process
 // environment and real Google credentials.
 type Options struct {
@@ -121,6 +136,9 @@ type Credential struct {
 	env    string
 	secret string
 	tokens TokenSource
+	// quotaProject is sent as X-Goog-User-Project with every
+	// GoogleADC request, as Google's own transport does.
+	quotaProject string
 }
 
 // Resolve reads the secret or finds the Google credentials c declares.
@@ -155,9 +173,18 @@ func (c Config) Resolve(ctx context.Context, opts Options) (*Credential, error) 
 		}
 		ts, err := detect(ctx, scopes)
 		if err != nil {
-			return nil, fmt.Errorf("auth: no Google Application Default Credentials: %w", err)
+			return nil, fmt.Errorf("%w: %w", ErrNoADC, err)
 		}
 		cred.tokens = ts
+		// Read once, as cloud.google.com/go/auth's httptransport does
+		// when it builds its transport.
+		if q, ok := ts.(QuotaProjecter); ok {
+			qp, err := q.QuotaProject(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("auth: quota project: %w", err)
+			}
+			cred.quotaProject = qp
+		}
 	}
 	return cred, nil
 }
@@ -171,6 +198,12 @@ func detectGoogle(_ context.Context, scopes []string) (TokenSource, error) {
 }
 
 type tokenSource struct{ creds *cloudauth.Credentials }
+
+// QuotaProject implements QuotaProjecter. The credentials resolve
+// GOOGLE_CLOUD_QUOTA_PROJECT ahead of the file's quota_project_id.
+func (t tokenSource) QuotaProject(ctx context.Context) (string, error) {
+	return t.creds.QuotaProjectID(ctx)
+}
 
 func (t tokenSource) Token(ctx context.Context) (string, error) {
 	tok, err := t.creds.Token(ctx)
@@ -206,8 +239,12 @@ func (c *Credential) String() string {
 	}
 }
 
+// quotaProjectHeader names the quota project a Google request bills.
+const quotaProjectHeader = "X-Goog-User-Project"
+
 // BearerTransport returns a RoundTripper that sets
-// "Authorization: Bearer <token>" on every request, fetching the token
+// "Authorization: Bearer <token>" on every request (and, for GoogleADC
+// credentials that name one, the X-Goog-User-Project quota project), fetching the token
 // per request so a Google access token is refreshed as it expires. For
 // None it returns base unchanged. A nil base means
 // http.DefaultTransport.
@@ -234,5 +271,9 @@ func (b bearer) RoundTrip(req *http.Request) (*http.Response, error) {
 	// A RoundTripper must not modify the request it was given.
 	req = req.Clone(req.Context())
 	req.Header.Set("Authorization", "Bearer "+tok)
+	// Never over a quota project the caller set.
+	if qp := b.cred.quotaProject; qp != "" && req.Header.Get(quotaProjectHeader) == "" {
+		req.Header.Set(quotaProjectHeader, qp)
+	}
 	return b.base.RoundTrip(req)
 }

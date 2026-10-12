@@ -206,6 +206,11 @@ func (m *model) GenerateContent(ctx context.Context, req *llm.Request, stream bo
 			return
 		}
 		ctx, rec := retry.WithRecord(ctx)
+		if !stream {
+			// A non-streaming answer arrives whole: the wait for headers
+			// is its generation time, bounded by UnaryHeaderTimeout.
+			ctx = retry.MarkUnary(ctx)
+		}
 		resp, err := m.send(ctx, body)
 		if err != nil {
 			yield(nil, err)

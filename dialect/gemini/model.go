@@ -74,6 +74,9 @@ func (m *baseModel) GenerateContent(ctx context.Context, req *llm.Request, strea
 	return func(yield func(*llm.Response, error) bool) {
 		ctx, rec := retry.WithRecord(ctx)
 		if !stream {
+			// The answer arrives whole: the wait for headers is the
+			// generation time, bounded by UnaryHeaderTimeout.
+			ctx = retry.MarkUnary(ctx)
 			resp, err := m.client.Models.GenerateContent(ctx, name, contents, cfg)
 			if err != nil {
 				yield(nil, fmt.Errorf("gemini: %w", err))

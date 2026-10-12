@@ -226,3 +226,68 @@ func TestAltEnvIsTriedInOrder(t *testing.T) {
 		t.Error("google_adc accepted alt_env")
 	}
 }
+
+// quotaTokens is a TokenSource whose credentials name a quota project.
+type quotaTokens struct{ project string }
+
+func (quotaTokens) Token(context.Context) (string, error)          { return "tok", nil }
+func (q quotaTokens) QuotaProject(context.Context) (string, error) { return q.project, nil }
+
+// TestBearerTransportSendsTheQuotaProject: user ADC with a quota project
+// (or GOOGLE_CLOUD_QUOTA_PROJECT) is billed against that project through
+// X-Goog-User-Project, as cloud.google.com/go/auth's httptransport sends
+// it; a header the caller set wins, and credentials naming none send
+// none.
+func TestBearerTransportSendsTheQuotaProject(t *testing.T) {
+	var got []string
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		got = append(got, r.Header.Get("X-Goog-User-Project"))
+	}))
+	defer srv.Close()
+	resolve := func(ts auth.TokenSource) *auth.Credential {
+		c, err := auth.Config{Kind: auth.GoogleADC}.Resolve(context.Background(), auth.Options{
+			DetectGoogle: func(context.Context, []string) (auth.TokenSource, error) { return ts, nil },
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	send := func(c *auth.Credential, preset string) {
+		req, _ := http.NewRequest(http.MethodGet, srv.URL, nil)
+		if preset != "" {
+			req.Header.Set("X-Goog-User-Project", preset)
+		}
+		resp, err := (&http.Client{Transport: c.BearerTransport(nil)}).Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+	}
+	send(resolve(quotaTokens{"billing-proj"}), "")
+	send(resolve(quotaTokens{"billing-proj"}), "caller-proj")
+	send(resolve(quotaTokens{""}), "")
+	want := []string{"billing-proj", "caller-proj", ""}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("request %d: X-Goog-User-Project = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+// TestNoADCIsASentinel: a host offers its own remedy for missing ADC by
+// errors.Is, not by matching text (core-models #30). The text is kept
+// for hosts that still match it.
+func TestNoADCIsASentinel(t *testing.T) {
+	_, err := auth.Config{Kind: auth.GoogleADC}.Resolve(context.Background(), auth.Options{
+		DetectGoogle: func(context.Context, []string) (auth.TokenSource, error) {
+			return nil, errors.New("could not find default credentials")
+		},
+	})
+	if !errors.Is(err, auth.ErrNoADC) {
+		t.Errorf("err = %v, want errors.Is ErrNoADC", err)
+	}
+	if !strings.Contains(err.Error(), "no Google Application Default Credentials") || !strings.Contains(err.Error(), "could not find default credentials") {
+		t.Errorf("err = %q, want the sentinel text and the cause", err)
+	}
+}
