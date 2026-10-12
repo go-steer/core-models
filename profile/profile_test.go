@@ -16,6 +16,7 @@ package profile_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -535,5 +536,30 @@ func TestVertexRegionChain(t *testing.T) {
 				t.Errorf("region = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestResolveKeepsTheAuthSentinel: a host checks errors.Is(err,
+// auth.ErrNoADC) on profile.Resolve's error, so Resolve wraps the auth
+// error rather than flattening it to text (core-models #30, found by
+// core-agent).
+func TestResolveKeepsTheAuthSentinel(t *testing.T) {
+	p, _ := profile.Builtin("anthropic-vertex")
+	_, err := profile.Resolve(context.Background(), p, profile.Options{
+		Getenv: func(k string) string {
+			if k == "GOOGLE_CLOUD_PROJECT" {
+				return "acme"
+			}
+			return ""
+		},
+		Auth: auth.Options{DetectGoogle: func(context.Context, []string) (auth.TokenSource, error) {
+			return nil, errors.New("open /missing.json: no such file")
+		}},
+	})
+	if !errors.Is(err, auth.ErrNoADC) {
+		t.Errorf("Resolve = %v, want errors.Is ErrNoADC", err)
+	}
+	if err == nil || !strings.Contains(err.Error(), `profile "anthropic-vertex"`) {
+		t.Errorf("Resolve = %v, want the profile named", err)
 	}
 }
