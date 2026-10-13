@@ -17,11 +17,15 @@ package anthropic
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
+
+	"google.golang.org/genai"
 
 	"github.com/go-steer/core-models/auth"
 	"github.com/go-steer/core-models/llm"
@@ -164,5 +168,51 @@ func TestTheEnvironmentDoesNotReachIn(t *testing.T) {
 	}
 	if gotKey != "test-key-not-real" {
 		t.Errorf("x-api-key = %q, want the credential's", gotKey)
+	}
+}
+
+// TestVertex_AnErrorNamesThePathCalled: the SDK builds …/v1/messages
+// and the Vertex middleware rewrites it, so an error must name the
+// rewritten :rawPredict/:streamRawPredict path, not one never called
+// (#35).
+func TestVertex_AnErrorNamesThePathCalled(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = io.WriteString(w, `{"type":"error","error":{"type":"not_found_error","message":"model not found"}}`)
+	}))
+	t.Cleanup(srv.Close)
+	cred, err := auth.Config{Kind: auth.GoogleADC}.Resolve(context.Background(), auth.Options{
+		DetectGoogle: func(context.Context, []string) (auth.TokenSource, error) { return staticToken("adc-token"), nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cl, err := New(Options{
+		BaseURL:    srv.URL + "/v1/projects/p1/locations/us-east5/publishers/anthropic/models",
+		Credential: cred,
+		Vertex:     true,
+		Backend:    "anthropic-vertex",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got error
+	for _, err := range cl.Model("claude-x@1").GenerateContent(context.Background(), &llm.Request{Contents: []*genai.Content{genai.NewContentFromText("hi", genai.RoleUser)}}, false) {
+		if err != nil {
+			got = err
+		}
+	}
+	if got == nil {
+		t.Fatal("no error from a 404")
+	}
+	msg := got.Error()
+	if strings.Contains(msg, "/v1/messages") || !strings.Contains(msg, "/publishers/anthropic/models/claude-x@1:streamRawPredict") {
+		t.Errorf("error = %q, want the rewritten Vertex path and not /v1/messages", msg)
+	}
+	var apiErr *APIError
+	if !errors.As(got, &apiErr) || apiErr.HTTPStatus() != http.StatusNotFound {
+		t.Errorf("error = %v, want an *APIError with status 404", got)
 	}
 }
