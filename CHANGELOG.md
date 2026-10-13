@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## v0.12.0 (2026-10-13)
+
+### Added
+
+- **`pricing.IntroductoryRates()` and `IntroductoryRate.Check`.** The list
+  of known promotional rates with end dates, and the check that fails once
+  a row outlives its expiry, or inverts to pin a `Resolved` rate. It was a
+  test-only table that mast and core-models each kept. Exported, a product
+  checks the rows it bills from against one list, and its build goes red on
+  a lapse whatever core-models version it pins. core-models' own test now
+  covers backend-qualified rows (e.g. `vertex/gemini-3.8-flash`) as well as
+  bare ones.
+
 ### Documentation
 
 - **Claude on Anthropic's first-party API is recorded live**
