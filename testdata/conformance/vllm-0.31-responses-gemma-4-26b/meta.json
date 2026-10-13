@@ -1,0 +1,13 @@
+{
+  "profile": "vllm",
+  "dialect": "openai-responses",
+  "model": "google/gemma-4-26B-A4B-it",
+  "extra_body": {
+    "chat_template_kwargs": {
+      "enable_thinking": true
+    }
+  },
+  "request_path": "/v1/responses",
+  "recorded": "2026-10-13",
+  "server": "vLLM v0.31.0 on GKE (RTX PRO 6000), POST /v1/responses through the openai-responses dialect; Gemma 4 with thinking on via extra_body, reasoning as reasoning_text content. The vllm profile does not declare reasoning_echo, so no include is sent and no reasoning is replayed; usage includes cache_write_tokens"
+}

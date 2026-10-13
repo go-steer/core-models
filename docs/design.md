@@ -60,7 +60,7 @@ import it. Product policy stays in each product.
 | D2 | **The core module depends on genai and vendor SDKs only, never ADK. Two nested shim modules, `adkv1` and `adkv2`, adapt it to each ADK major.** | mast is on `adk/v2` and core-agent is on `adk` v1.7. Their `model.LLM`, `LLMRequest` and `LLMResponse` are identical in fields but are distinct Go types. The shims are field copies. The `adkv1` shim is deleted whenever core-agent moves to ADK v2; that migration is a separate track and does not block this work. *core-agent moved to ADK v2 (core-agent #1291) and to `adkv2` (#1296); `adkv1` is deprecated in v0.6.6, its last release, and the directory goes in a later cleanup.* |
 | D3 | **Pricing moves into the library, in a later phase (L6)** | The two catalogs diverged in opposite directions: mast keys rates by (backend, model), and core-agent has the 1-hour cache-write rate. They are merged once, after the adapters land. Until then each repo prices new providers through its own catalog's override layer. |
 | D4 | **New providers first, then extract the existing ones** | New providers are the requirement. The contract is still designed against the existing Gemini and Anthropic adapters ([§4](#4-the-contract)), so extracting them later is a move, not a redesign. |
-| D5 | **The library does not use ADK's `model/openaimodel`** *(amended in L1: `openai-chat` is written on net/http and its own wire types, not openai-go; see §7.1)* | It now speaks both Responses and Chat Completions, but it exists only in ADK v2, so core-agent cannot use it (D2). The OpenAI dialects are written on `openai-go/v3` directly. That module is already in mast's module graph through ADK v2. |
+| D5 | **The library does not use ADK's `model/openaimodel`** *(amended in L1 and L2: both OpenAI dialects are written on net/http and their own wire types, not openai-go; see §7.1 and §7.2)* | It now speaks both Responses and Chat Completions, but it exists only in ADK v2, so core-agent cannot use it (D2). The plan was to write the OpenAI dialects on `openai-go/v3` directly. In the event neither uses it: pointer-typed wire structs keep an unreported count distinct from zero, servers add and omit fields an SDK's types fight, and no module enters the graph. |
 | D6 | **No proxy as a required hop** | Carried over from mast model-support §4.7. LiteLLM or OpenRouter is reachable as an ordinary `openai-chat` profile; it is never in the path by default. |
 
 ## 3. Module layout
@@ -355,6 +355,76 @@ reasoning round-trips through `genai.Part.ThoughtSignature`, mirroring how the
 Anthropic adapter carries thinking signatures, so a tool loop does not lose its
 reasoning. Usage maps `input_tokens_details.cached_tokens` and
 `output_tokens_details.reasoning_tokens`.
+
+**As built (2026-10-13), package `dialect/openairesp`:**
+- **net/http and its own wire types,** like `openai-chat`, not openai-go (D5,
+  amended). What the two OpenAI dialects do identically is shared, not
+  copied: `internal/schemajson` (genai Schema → JSON Schema) and
+  `internal/openaishared` (usage mapping, error parsing, tool-call ids).
+- **Encrypted reasoning only where reasoning is replayed:** `include:
+  ["reasoning.encrypted_content"]` is sent when the profile declares
+  `capabilities.reasoning_echo` (the `openai` built-in does; `vllm` does
+  not), and reasoning is replayed only then.
+- **Self-correcting optional fields,** not a model list: OpenAI's
+  non-reasoning models refuse `include`, and its reasoning models refuse
+  `temperature` and `top_p`. A 400 that names one of those fields (by
+  `param`, or in the message when there is no `param`), when the request
+  carried it, is retried once without it, and the refusal is remembered per
+  model for the Client's life. The response lists what was left off under
+  `core_models.dropped_params`. A 400 about anything else is the caller's,
+  so this cannot loop. The cost is one refused round trip per model per
+  process. A list of which model takes what would go stale with every
+  release, and the server's own refusal is the authority.
+- **System prompt → `instructions`,** the API's own field for it, which keeps
+  the input list to the conversation.
+- **Turns → input items in part order:** user text and images as a `message`
+  with `input_text`/`input_image`; model text as an assistant `message` with
+  `output_text`; `FunctionCall` ↔ `function_call` and `FunctionResponse` →
+  `function_call_output`, matched by `call_id`; function tools in the flat
+  shape (`name`, `parameters` at the top).
+- **Reasoning:** OpenAI's `summary_text` and vLLM's `reasoning_text` content
+  both become `Part{Thought: true}`. The item's `id` and `encrypted_content`
+  ride in `ThoughtSignature` as a small versioned envelope, because the API
+  needs both to accept the item back. A thought without that envelope — vLLM's
+  plain reasoning, or another provider's signature — is not replayed: with
+  `store: false`, OpenAI accepts a reasoning item only with its encrypted
+  content.
+- **`reasoning`:** `ThinkingLevel` maps to `effort` directly. A
+  `ThinkingBudget` is not mapped, not even zero: the API has no token budget,
+  and the value that means "no reasoning" differs by model (`minimal`, `none`,
+  or neither), so thinking off is expressible only as a `ThinkingLevel`.
+  `IncludeThoughts` asks for summaries (`summary: auto`).
+- **Tool choice keeps an allow-list:** one name forced is a named choice;
+  several names, or names with mode auto, go in an `allowed_tools` choice
+  (`mode: auto` or `required`).
+- **Refused, not dropped:** every generation setting the API cannot carry,
+  each named in the error: stop sequences, seed, penalties, top_k, logprobs,
+  safety settings, a cached-content reference, non-text response modalities,
+  speech, audio timestamps, image config, media resolution, routing, labels,
+  service tier, Model Armor, civic answers, and a response MIME type other
+  than text or JSON; and provider built-ins. (`openai-chat` still drops most
+  of these silently; aligning it is a separate change, since it alters a
+  released dialect's behaviour.)
+- **Refusals** stream as text partials, as `openai-chat` surfaces them, and
+  the final response carries `core_models.refusal`.
+- **Streaming:** text and reasoning deltas become partials; the final response
+  is decoded from `response.completed` (or `response.incomplete`), which
+  carries the whole response, so a streamed and an unstreamed call cannot
+  disagree. It is the call's one `TurnComplete`.
+- **Status:** `incomplete` with `max_output_tokens` → `MAX_TOKENS`,
+  `content_filter` → `SAFETY`; `failed` and an SSE `error` event → `APIError`.
+- **Usage:** reasoning counts inside `output_tokens`, as in Chat Completions,
+  so it is subtracted from candidates. vLLM's
+  `input_tokens_details.cache_write_tokens` maps to `CacheWriteTokens`.
+- **Profiles:** built-in `openai` (Responses) and `xai` (Chat Completions;
+  extend it with `dialect: openai-responses` to opt in), with backends named
+  `openai` and `xai`, so a derived profile prices under the vendor. Any profile can set
+  that dialect: vLLM serves `/v1/responses`, and the conformance corpus
+  records Gemma 4 on our vLLM through it.
+- **Owed:** the L2 exit criterion's live tool loop against OpenAI and xAI,
+  and an encrypted-reasoning recording from a real OpenAI reasoning model.
+  No key is available; the encrypted round trip is covered offline against
+  OpenAI's documented response shape.
 
 ### 7.3 `anthropic` (L4) and `gemini` (L5): extraction
 

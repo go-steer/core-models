@@ -31,6 +31,7 @@ import (
 
 	"github.com/go-steer/core-models/dialect/anthropic"
 	"github.com/go-steer/core-models/dialect/openaichat"
+	"github.com/go-steer/core-models/dialect/openairesp"
 	"github.com/go-steer/core-models/llm"
 	"github.com/go-steer/core-models/profile"
 	"github.com/go-steer/core-models/retry"
@@ -119,7 +120,32 @@ func Open(ctx context.Context, p profile.Profile, opts Options) (Provider, error
 	case profile.Anthropic:
 		return openAnthropic(r, opts)
 	case profile.OpenAIResponses:
-		return nil, fmt.Errorf("profile %q: dialect %s is not built yet (docs/design.md §11: openai-responses is L2)", rp.Name, rp.Dialect)
+		if len(opts.BuiltinTools) > 0 {
+			return nil, fmt.Errorf("profile %q: dialect %s sends function tools only, but %v were asked for", rp.Name, rp.Dialect, opts.BuiltinTools)
+		}
+		c, err := openairesp.New(openairesp.Options{
+			BaseURL:                r.BaseURL,
+			Credential:             r.Credential,
+			HTTPClient:             opts.HTTPClient,
+			Retry:                  opts.Retry,
+			Backend:                rp.BackendName(),
+			Region:                 r.Params["region"],
+			ResponseSchema:         profile.Has(rp.Capabilities.ResponseSchema),
+			ReasoningEcho:          profile.Has(rp.Capabilities.ReasoningEcho),
+			CachedTokensUnreliable: rp.Usage.CachedTokens == profile.Unreliable,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("profile %q: %w", rp.Name, err)
+		}
+		return &provider{p: rp, model: func(id string) llm.LLM {
+			caps := rp.CapabilitiesFor(id)
+			return c.ModelWith(id, openairesp.ModelOptions{
+				ResponseSchema:     new(profile.Has(caps.ResponseSchema)),
+				ReasoningEcho:      new(profile.Has(caps.ReasoningEcho)),
+				NoForcedToolChoice: new(caps.ForcedToolChoice != nil && !*caps.ForcedToolChoice),
+				ExtraBody:          rp.ExtraBodyFor(id),
+			})
+		}}, nil
 	}
 	return nil, fmt.Errorf("profile %q: unknown dialect %q", rp.Name, rp.Dialect)
 }

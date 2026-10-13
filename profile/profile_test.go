@@ -582,3 +582,25 @@ func TestContextWindowFor(t *testing.T) {
 		}
 	}
 }
+
+// TestVendorProfilesPriceUnderTheVendor: a profile extending openai or
+// xai — including xai opted into the Responses API — keeps the vendor's
+// backend name, so pricing finds the vendor's rows whatever the operator
+// calls it.
+func TestVendorProfilesPriceUnderTheVendor(t *testing.T) {
+	for _, tc := range []struct {
+		p    profile.Profile
+		want string
+	}{
+		{profile.Profile{Name: "team-openai", Extends: "openai"}, "openai"},
+		{profile.Profile{Name: "grok-responses", Extends: "xai", Dialect: profile.OpenAIResponses}, "xai"},
+	} {
+		got, err := profile.Expand(tc.p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.BackendName() != tc.want {
+			t.Errorf("%s: BackendName = %q, want %q", tc.p.Name, got.BackendName(), tc.want)
+		}
+	}
+}

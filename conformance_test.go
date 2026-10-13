@@ -26,7 +26,9 @@ package coremodels_test
 // To add a server: run the live smoke against it with
 // CORE_MODELS_LIVE_RECORD=testdata/conformance/<server>, write a
 // meta.json naming the profile and model (and base_path and
-// request_path, when the profile's base_url has no /v1 root), and redact
+// request_path, when the profile's base_url has no /v1 root or the
+// dialect posts elsewhere; dialect, when the recording used one the
+// profile does not default to), and redact
 // anything identifying from the request paths.
 
 import (
@@ -49,7 +51,10 @@ import (
 
 type corpusMeta struct {
 	Profile string `json:"profile"`
-	Model   string `json:"model"`
+	// Dialect overrides the profile's, for a server recorded on a
+	// dialect its built-in does not default to (vLLM's /v1/responses).
+	Dialect profile.Dialect `json:"dialect,omitempty"`
+	Model   string          `json:"model"`
 	// ExtraBody is the model's extra_body when the recording was made, so
 	// the replay sends the same request.
 	ExtraBody map[string]any `json:"extra_body,omitempty"`
@@ -92,7 +97,7 @@ func TestConformance(t *testing.T) {
 					if base == "" {
 						base = "/v1"
 					}
-					p := profile.Profile{Name: "replay", Extends: meta.Profile, BaseURL: srv.URL + base}
+					p := profile.Profile{Name: "replay", Extends: meta.Profile, Dialect: meta.Dialect, BaseURL: srv.URL + base}
 					if meta.ExtraBody != nil {
 						p.Models = []profile.Model{{ID: meta.Model, ExtraBody: meta.ExtraBody}}
 					}

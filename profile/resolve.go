@@ -129,6 +129,35 @@ var builtins = map[string]Profile{
 		},
 		derive: anthropicVertexHost,
 	},
+	// OpenAI first-party, on the Responses API (docs/design.md §7.2).
+	// Backends are named, as for gemini below, so a derived profile
+	// prices under the vendor whatever an operator calls it.
+	"openai": {
+		Name:       "openai",
+		Dialect:    OpenAIResponses,
+		Backend:    "openai",
+		BaseURL:    "https://api.openai.com/v1",
+		Auth:       auth.Config{Kind: auth.APIKey, Env: "OPENAI_API_KEY"},
+		OpenModels: yes(),
+		Capabilities: Capabilities{
+			ResponseSchema: yes(), ReasoningEcho: yes(), ParallelToolCalls: yes(),
+			ServerTools: no(), Streaming: yes(), ForcedToolChoice: yes(),
+		},
+	},
+	// xAI, on Chat Completions; a profile that extends it with
+	// `dialect: openai-responses` opts into xAI's Responses API.
+	"xai": {
+		Name:       "xai",
+		Dialect:    OpenAIChat,
+		Backend:    "xai",
+		BaseURL:    "https://api.x.ai/v1",
+		Auth:       auth.Config{Kind: auth.APIKey, Env: "XAI_API_KEY"},
+		OpenModels: yes(),
+		Capabilities: Capabilities{
+			ResponseSchema: yes(), ReasoningEcho: no(), ParallelToolCalls: yes(),
+			ServerTools: no(), Streaming: yes(), ForcedToolChoice: yes(),
+		},
+	},
 	"openai-compatible": {
 		Name:       "openai-compatible",
 		Dialect:    OpenAIChat,

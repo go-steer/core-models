@@ -177,10 +177,3 @@ type errorBody struct {
 	Type    string          `json:"type"`
 	Code    json.RawMessage `json:"code"`
 }
-
-type errorEnvelope struct {
-	Error *errorBody `json:"error"`
-	// Some servers (older vLLM, llama.cpp) put the message at the top.
-	Message string `json:"message"`
-	Detail  string `json:"detail"`
-}

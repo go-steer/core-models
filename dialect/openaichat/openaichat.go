@@ -37,16 +37,15 @@ import (
 	"fmt"
 	"io"
 	"iter"
-	"math"
 	"net/http"
 	"strings"
 
 	"google.golang.org/genai"
 
 	"github.com/go-steer/core-models/auth"
+	"github.com/go-steer/core-models/internal/openaishared"
 	"github.com/go-steer/core-models/llm"
 	"github.com/go-steer/core-models/retry"
-	"github.com/go-steer/core-models/usage"
 )
 
 // Options configures a Client. A coremodels.Open caller never builds
@@ -295,37 +294,8 @@ func (m *model) encode(body *chatRequest) ([]byte, error) {
 
 func apiError(resp *http.Response) error {
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-	e := &APIError{StatusCode: resp.StatusCode}
-	var env errorEnvelope
-	// Vertex AI wraps its error object in a one-element array.
-	var wrapped []errorEnvelope
-	if json.Unmarshal(raw, &wrapped) == nil && len(wrapped) > 0 {
-		env = wrapped[0]
-	} else {
-		_ = json.Unmarshal(raw, &env)
-	}
-	{
-		switch {
-		case env.Error != nil:
-			e.Message, e.Type, e.Code = env.Error.Message, env.Error.Type, codeString(env.Error.Code)
-		case env.Message != "":
-			e.Message = env.Message
-		case env.Detail != "":
-			e.Message = env.Detail
-		}
-	}
-	if e.Message == "" {
-		e.Message = strings.TrimSpace(string(raw))
-	}
-	return e
-}
-
-func codeString(raw json.RawMessage) string {
-	var s string
-	if json.Unmarshal(raw, &s) == nil {
-		return s
-	}
-	return strings.Trim(string(raw), `"`)
+	f := openaishared.ParseError(raw)
+	return &APIError{StatusCode: resp.StatusCode, Type: f.Type, Code: f.Code, Message: f.Message}
 }
 
 func (m *model) decodeComplete(r io.Reader) (*llm.Response, error) {
@@ -380,7 +350,7 @@ func (m *model) decodeStream(r io.Reader) iter.Seq2[*llm.Response, error] {
 				return
 			}
 			if c.Error != nil {
-				yield(nil, &APIError{Type: c.Error.Type, Code: codeString(c.Error.Code), Message: c.Error.Message})
+				yield(nil, &APIError{Type: c.Error.Type, Code: openaishared.CodeString(c.Error.Code), Message: c.Error.Message})
 				return
 			}
 			if c.ID != "" {
@@ -542,7 +512,7 @@ func (m *model) finish(acc *accumulator, id, served, finish string, u *wireUsage
 		}
 		callID := c.id
 		if callID == "" {
-			callID = newCallID()
+			callID = openaishared.NewCallID()
 		}
 		content.Parts = append(content.Parts, &genai.Part{FunctionCall: &genai.FunctionCall{ID: callID, Name: c.name, Args: args}})
 	}
@@ -591,90 +561,32 @@ func finishReason(s string) genai.FinishReason {
 	return genai.FinishReasonOther
 }
 
-// mapUsage maps the server's usage onto genai's struct and a Detail. A
-// field the server did not send is absent from both — never a zero.
-// genai counts reasoning apart from candidates; OpenAI counts it inside
-// completion_tokens, so it is subtracted where reported.
+// mapUsage maps the server's usage onto genai's struct and a Detail
+// (openaishared.MapUsage): a field the server did not send is absent
+// from both — never a zero.
 func (m *model) mapUsage(u *wireUsage, id, served string, md map[string]any) (*genai.GenerateContentResponseUsageMetadata, map[string]any) {
-	d := &usage.Detail{
-		ServedModel:       served,
-		ProviderRequestID: id,
-		Backend:           m.opts.Backend,
-		Region:            m.opts.Region,
+	stamp := openaishared.Stamp{
+		RequestID: id, ServedModel: served, Backend: m.opts.Backend, Region: m.opts.Region,
+		CachedUnreliable: m.opts.CachedTokensUnreliable,
 	}
-	var um *genai.GenerateContentResponseUsageMetadata
-	if u != nil {
-		um = &genai.GenerateContentResponseUsageMetadata{}
-		var reasoning int64
-		if u.CompletionTokensDetails != nil && u.CompletionTokensDetails.ReasoningTokens != nil {
-			reasoning = *u.CompletionTokensDetails.ReasoningTokens
-			d.ReasoningTokens = ptr(reasoning)
-			um.ThoughtsTokenCount = clamp32(reasoning)
-		}
-		if u.PromptTokens != nil {
-			um.PromptTokenCount = clamp32(*u.PromptTokens)
-		}
-		if u.CompletionTokens != nil {
-			um.CandidatesTokenCount = clamp32(*u.CompletionTokens - reasoning)
-		}
-		switch {
-		case u.TotalTokens != nil:
-			um.TotalTokenCount = clamp32(*u.TotalTokens)
-		case u.PromptTokens != nil && u.CompletionTokens != nil:
-			um.TotalTokenCount = clamp32(*u.PromptTokens + *u.CompletionTokens)
-		}
-		if !m.opts.CachedTokensUnreliable && u.PromptTokensDetails != nil {
-			if c := u.PromptTokensDetails.CachedTokens; c != nil {
-				d.CacheReadTokens = ptr(*c)
-				um.CachedContentTokenCount = clamp32(*c)
-			}
-			// genai's struct has no cache-write bucket; the Detail does.
-			if w := u.PromptTokensDetails.CreatedCacheTokens; w != nil {
-				d.CacheWriteTokens = ptr(*w)
-			}
-		}
+	if u == nil {
+		return openaishared.MapUsage(nil, stamp, md)
 	}
-	resp := &llm.Response{CustomMetadata: md}
-	usage.Attach(resp, d)
-	return um, resp.CustomMetadata
-}
-
-// clamp32 narrows a count to genai's int32 fields, saturating rather
-// than wrapping: a server that reports an absurd count gets a ceiling,
-// never a negative number. Detail keeps the full int64.
-func clamp32(n int64) int32 {
-	switch {
-	case n > math.MaxInt32:
-		return math.MaxInt32
-	case n < 0:
-		return 0
+	n := &openaishared.Usage{Input: u.PromptTokens, Output: u.CompletionTokens, Total: u.TotalTokens}
+	if u.CompletionTokensDetails != nil {
+		n.Reasoning = u.CompletionTokensDetails.ReasoningTokens
 	}
-	return int32(n)
+	if u.PromptTokensDetails != nil {
+		n.CacheRead = u.PromptTokensDetails.CachedTokens
+		n.CacheWrite = u.PromptTokensDetails.CreatedCacheTokens
+	}
+	return openaishared.MapUsage(n, stamp, md)
 }
 
 // ToolChoiceKey marks a response whose request asked for a forced tool
 // call the model cannot take, and was sent with "auto" instead.
 const ToolChoiceKey = "core_models.tool_choice_downgraded"
 
-func stampNotes(r *llm.Response, notes map[string]any) {
-	if len(notes) == 0 {
-		return
-	}
-	if r.CustomMetadata == nil {
-		r.CustomMetadata = map[string]any{}
-	}
-	for k, v := range notes {
-		r.CustomMetadata[k] = v
-	}
-}
+func stampNotes(r *llm.Response, notes map[string]any) { openaishared.StampNotes(r, notes) }
 
-func stampRetry(r *llm.Response, rec *retry.Record) {
-	snap := rec.Snapshot()
-	if snap == (retry.Snapshot{}) {
-		return
-	}
-	if r.CustomMetadata == nil {
-		r.CustomMetadata = map[string]any{}
-	}
-	r.CustomMetadata[retry.MetadataKey] = snap
-}
+func stampRetry(r *llm.Response, rec *retry.Record) { openaishared.StampRetry(r, rec) }
