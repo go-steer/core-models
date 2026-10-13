@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+## v0.13.0 (2026-10-13)
+
+### API Change
+
+- **`openai-chat` refuses generation settings it can't send instead of
+  dropping them** (#47). Before, a caller asking for `top_k`, logprobs,
+  safety settings, a Gemini cached-content reference, non-text modalities,
+  labels, routing, a service tier or a non-JSON MIME type got a request
+  sent without it, and an answer to a different question. Now the call
+  fails before anything is sent, naming the setting. It's the same list
+  `openai-responses` has refused since it shipped, minus stop sequences,
+  seed and penalties, which Chat Completions carries. `top_k` for a server
+  that accepts it, such as vLLM, goes in the profile's `extra_body`.
+  Thinking settings are unaffected. Neither mast nor core-agent sets any
+  refused field on a model request (checked before this change).
+
 ## v0.12.0 (2026-10-13)
 
 ### Added

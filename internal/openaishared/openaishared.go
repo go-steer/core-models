@@ -24,6 +24,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"math"
 	"strings"
 
@@ -290,4 +291,56 @@ func StampRetry(r *llm.Response, rec *retry.Record) {
 		r.CustomMetadata = map[string]any{}
 	}
 	r.CustomMetadata[retry.MetadataKey] = snap
+}
+
+// UnsupportedConfig names the first generation setting neither OpenAI
+// API (Chat Completions, Responses) can carry, or "" when there is none.
+// Each changes what the model produces or how it is billed, so dropping
+// it quietly would answer a different request than the one asked. A
+// dialect checks its own extra limits first (Responses also has no stop
+// sequences, seed or penalties). Thinking settings are deliberately not
+// here: products pass them generically, and Chat Completions servers take
+// thinking per model through extra_body.
+func UnsupportedConfig(cfg *genai.GenerateContentConfig) string {
+	switch {
+	case cfg == nil:
+		return ""
+	case cfg.TopK != nil:
+		return "top_k (a server that accepts it, such as vLLM, takes it through the profile's extra_body)"
+	case cfg.ResponseLogprobs || cfg.Logprobs != nil:
+		return "logprobs"
+	case len(cfg.SafetySettings) > 0:
+		return "safety settings"
+	case cfg.CachedContent != "":
+		return "a cached-content reference (a Gemini context cache)"
+	case !TextOnly(cfg.ResponseModalities):
+		return fmt.Sprintf("response modalities %v", cfg.ResponseModalities)
+	case cfg.SpeechConfig != nil:
+		return "speech config"
+	case cfg.AudioTimestamp:
+		return "audio timestamps"
+	case cfg.ImageConfig != nil:
+		return "image config"
+	case cfg.MediaResolution != "" && cfg.MediaResolution != genai.MediaResolutionUnspecified:
+		return "media resolution"
+	case cfg.RoutingConfig != nil || cfg.ModelSelectionConfig != nil:
+		return "model routing"
+	case len(cfg.Labels) > 0:
+		return "labels"
+	case cfg.ServiceTier != "":
+		return "service tier"
+	case cfg.ModelArmorConfig != nil:
+		return "Model Armor config"
+	case cfg.EnableEnhancedCivicAnswers != nil:
+		return "enhanced civic answers"
+	case cfg.ResponseMIMEType != "" && cfg.ResponseMIMEType != "text/plain" && cfg.ResponseMIMEType != "application/json":
+		return fmt.Sprintf("response MIME type %q", cfg.ResponseMIMEType)
+	}
+	return ""
+}
+
+// TextOnly reports whether modalities asks for nothing but text, which is
+// all the OpenAI dialects produce. None asked for counts as text.
+func TextOnly(modalities []string) bool {
+	return len(modalities) == 0 || (len(modalities) == 1 && strings.EqualFold(modalities[0], "TEXT"))
 }

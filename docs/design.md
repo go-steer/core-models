@@ -403,9 +403,12 @@ reasoning. Usage maps `input_tokens_details.cached_tokens` and
   safety settings, a cached-content reference, non-text response modalities,
   speech, audio timestamps, image config, media resolution, routing, labels,
   service tier, Model Armor, civic answers, and a response MIME type other
-  than text or JSON; and provider built-ins. (`openai-chat` still drops most
-  of these silently; aligning it is a separate change, since it alters a
-  released dialect's behaviour.)
+  than text or JSON; and provider built-ins. Since v0.13.0 `openai-chat`
+  refuses the same list (#47), except stop sequences, seed and penalties,
+  which Chat Completions carries; both use
+  `internal/openaishared.UnsupportedConfig`. Thinking settings are left out
+  of both lists on purpose: products pass them generically, and Chat
+  Completions servers take thinking per model through `extra_body`.
 - **Refusals** stream as text partials, as `openai-chat` surfaces them, and
   the final response carries `core_models.refusal`.
 - **Streaming:** text and reasoning deltas become partials; the final response
