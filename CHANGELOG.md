@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Documentation
+
+- **L3 is done.** mast #543 consumes `kvmetrics`: `/usage` reports a
+  fleet-level prefix-cache window for the last turn and the session, and
+  the judged eval board reports one per incident. Live against our vLLM
+  0.31, the hit rates were 85–95%.
+
 ## v0.11.0 (2026-10-13)
 
 ### Added
