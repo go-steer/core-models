@@ -13,7 +13,10 @@
   - A metric the server doesn't expose stays nil.
   - Readers for vLLM (verified live on 0.31), SGLang and llama.cpp; Ollama
     gets `ErrNoMetrics`.
-  - A counter reset mid-window is summed per segment and flagged.
+  - Increases are computed per series and summed, so one engine
+    restarting mid-window is counted correctly and flagged.
+  - The profile's credential is sent only to a metrics endpoint with the
+    same origin as the API, and a Google ADC token only over https.
   - A new profile field, `metrics` (`vllm`, `sglang`, `llamacpp`, `none`),
     names the vocabulary. The `vllm`, `sglang` and `ollama` built-ins set
     it, and extending profiles inherit it.

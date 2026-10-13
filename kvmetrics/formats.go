@@ -14,66 +14,143 @@
 
 package kvmetrics
 
-import "math"
+import (
+	"fmt"
+	"math"
+	"slices"
+	"sort"
+	"strings"
 
-// The per-server readers turn a parsed exposition into a Reading. Each
-// metric is looked up under its current name first and older names
-// after, and summed across engines (and models, unless one is asked
-// for). A metric no name matches stays nil.
+	"github.com/go-steer/core-models/profile"
+)
+
+// A reader turns a parsed exposition into a Reading for one server's
+// metric vocabulary. Each metric is looked up under its current name
+// first and older names after. A metric no name matches stays nil.
+type reader struct {
+	queries, hits []string // counters, in tokens
+	hitRate       []string // a server-computed rate gauge, averaged
+	kvUsage       []string // a 0–1 utilization gauge, the busiest series
+	// modelLabeled says the server labels series with the model, so
+	// Options.Model can narrow a reading.
+	modelLabeled bool
+}
 
 // modelLabel is the label vLLM and SGLang put the served model on.
 const modelLabel = "model_name"
 
-// readVLLM reads vLLM's V1 metrics (verified on vLLM 0.31): the
-// prefix-cache counters are in tokens, and kv_cache_usage_perc is a
-// 0–1 fraction despite its name. The gpu_* names are earlier V1
-// releases'.
-func readVLLM(ss []sample, model string) Reading {
-	return Reading{
-		Queries: sum(ss, model, "vllm:prefix_cache_queries_total", "vllm:gpu_prefix_cache_queries_total", "vllm:gpu_prefix_cache_queries"),
-		Hits:    sum(ss, model, "vllm:prefix_cache_hits_total", "vllm:gpu_prefix_cache_hits_total", "vllm:gpu_prefix_cache_hits"),
-		KVUsage: peak(ss, model, "vllm:kv_cache_usage_perc", "vllm:gpu_cache_usage_perc"),
+func readerFor(f profile.MetricsFormat) (reader, error) {
+	switch f {
+	case profile.MetricsVLLM:
+		// vLLM V1 (verified on 0.31): the prefix-cache counters are in
+		// tokens, and kv_cache_usage_perc is a 0–1 fraction despite its
+		// name. The gpu_* names are earlier V1 releases'.
+		return reader{
+			queries:      []string{"vllm:prefix_cache_queries_total", "vllm:gpu_prefix_cache_queries_total", "vllm:gpu_prefix_cache_queries"},
+			hits:         []string{"vllm:prefix_cache_hits_total", "vllm:gpu_prefix_cache_hits_total", "vllm:gpu_prefix_cache_hits"},
+			kvUsage:      []string{"vllm:kv_cache_usage_perc", "vllm:gpu_cache_usage_perc"},
+			modelLabeled: true,
+		}, nil
+	case profile.MetricsSGLang:
+		// SGLang, from its documentation (not yet verified against a live
+		// server). Every prompt token is looked up in SGLang's radix
+		// cache, so prompt_tokens_total is the query count and
+		// cached_tokens_total the hits, where the build exports them;
+		// older builds have only the cache_hit_rate gauge. token_usage is
+		// the KV pool in use, 0–1. SGLang has used both prefixes.
+		return reader{
+			queries:      []string{"sglang:prompt_tokens_total", "sglang_prompt_tokens_total"},
+			hits:         []string{"sglang:cached_tokens_total", "sglang_cached_tokens_total"},
+			hitRate:      []string{"sglang:cache_hit_rate", "sglang_cache_hit_rate"},
+			kvUsage:      []string{"sglang:token_usage", "sglang_token_usage"},
+			modelLabeled: true,
+		}, nil
+	case profile.MetricsLlamaCpp:
+		// llama.cpp server's --metrics, from its documentation (not yet
+		// verified against a live server): utilization, but no
+		// prefix-cache hit counters.
+		return reader{kvUsage: []string{"llamacpp:kv_cache_usage_ratio"}}, nil
+	case profile.MetricsNone:
+		return reader{}, ErrNoMetrics
+	case "":
+		return reader{}, fmt.Errorf("kvmetrics: no metrics format; set the profile's metrics field (vllm, sglang or llamacpp)")
 	}
+	return reader{}, fmt.Errorf("kvmetrics: unknown metrics format %q", f)
 }
 
-// readSGLang reads SGLang's metrics, from its documentation (not yet
-// verified against a live server). Every prompt token is looked up in
-// SGLang's radix cache, so prompt_tokens_total is the query count and
-// cached_tokens_total the hits, where the build exports them; older
-// builds have only the cache_hit_rate gauge. token_usage is the KV pool
-// in use, 0–1. SGLang has used both "sglang:" and "sglang_" prefixes.
-func readSGLang(ss []sample, model string) Reading {
-	return Reading{
-		Queries: sum(ss, model, "sglang:prompt_tokens_total", "sglang_prompt_tokens_total"),
-		Hits:    sum(ss, model, "sglang:cached_tokens_total", "sglang_cached_tokens_total"),
-		HitRate: peak(ss, model, "sglang:cache_hit_rate", "sglang_cache_hit_rate"),
-		KVUsage: peak(ss, model, "sglang:token_usage", "sglang_token_usage"),
+func (rd reader) read(ss []sample, model string) Reading {
+	if !rd.modelLabeled {
+		model = ""
 	}
+	var r Reading
+	r.Queries, r.queries = counter(ss, model, rd.queries)
+	r.Hits, r.hits = counter(ss, model, rd.hits)
+	r.HitRate = mean(ss, model, rd.hitRate)
+	r.KVUsage = peak(ss, model, rd.kvUsage)
+	return r
 }
 
-// readLlamaCpp reads llama.cpp server's --metrics endpoint, from its
-// documentation (not yet verified against a live server). It reports
-// KV-cache utilization but no prefix-cache hit counters, so Queries and
-// Hits stay nil.
-func readLlamaCpp(ss []sample, _ string) Reading {
-	return Reading{
-		KVUsage: peak(ss, "", "llamacpp:kv_cache_usage_ratio"),
+// checkModel refuses a model filter that matches nothing the endpoint
+// has: a reading of all nils would look like a server that does not
+// report the metrics, when it reports them for other models. It names
+// the models that are present.
+func (rd reader) checkModel(ss []sample, model string) error {
+	if model == "" || !rd.modelLabeled {
+		return nil
 	}
+	known := slices.Concat(rd.queries, rd.hits, rd.hitRate, rd.kvUsage)
+	present := map[string]bool{}
+	for _, s := range ss {
+		if slices.Contains(known, s.name) {
+			if m, ok := s.labels[modelLabel]; ok {
+				present[m] = true
+			}
+		}
+	}
+	if len(present) == 0 || present[model] {
+		return nil
+	}
+	names := make([]string, 0, len(present))
+	for m := range present {
+		names = append(names, m)
+	}
+	sort.Strings(names)
+	return fmt.Errorf("kvmetrics: the metrics endpoint has no series for model %q (it has %s)", model, strings.Join(names, ", "))
 }
 
-// sum adds every series of the first name that has any, optionally only
-// those labelled with model. Nil when no name has a series.
-func sum(ss []sample, model string, names ...string) *float64 {
+// counter returns the total of the first name that has any series,
+// optionally only those labelled with model, and the value per series
+// keyed by name and full label set. Nil when no name has a series.
+func counter(ss []sample, model string, names []string) (*float64, map[string]float64) {
 	for _, n := range names {
-		total, found := 0.0, false
+		total, series := 0.0, map[string]float64{}
 		for _, s := range ss {
 			if s.name == n && matches(s, model) {
 				total += s.value
-				found = true
+				series[seriesKey(s)] = s.value
 			}
 		}
-		if found {
-			return &total
+		if len(series) > 0 {
+			return &total, series
+		}
+	}
+	return nil, nil
+}
+
+// mean averages the first name's series: a server-computed rate across
+// engines. A maximum would overstate it, and no series exposes a weight
+// to average by.
+func mean(ss []sample, model string, names []string) *float64 {
+	for _, n := range names {
+		total, count := 0.0, 0
+		for _, s := range ss {
+			if s.name == n && matches(s, model) {
+				total += s.value
+				count++
+			}
+		}
+		if count > 0 {
+			return ptr(total / float64(count))
 		}
 	}
 	return nil
@@ -81,13 +158,12 @@ func sum(ss []sample, model string, names ...string) *float64 {
 
 // peak is the largest value among the first name's series: for a
 // utilization gauge across engines, the busiest one.
-func peak(ss []sample, model string, names ...string) *float64 {
+func peak(ss []sample, model string, names []string) *float64 {
 	for _, n := range names {
 		var best *float64
 		for _, s := range ss {
 			if s.name == n && matches(s, model) && (best == nil || s.value > *best) {
-				v := s.value
-				best = &v
+				best = ptr(s.value)
 			}
 		}
 		if best != nil {
@@ -105,4 +181,19 @@ func matches(s sample, model string) bool {
 		return false
 	}
 	return model == "" || s.labels[modelLabel] == model
+}
+
+// seriesKey identifies a series by name and full label set.
+func seriesKey(s sample) string {
+	keys := make([]string, 0, len(s.labels))
+	for k := range s.labels {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	b.WriteString(s.name)
+	for _, k := range keys {
+		fmt.Fprintf(&b, "\x00%s=%s", k, s.labels[k])
+	}
+	return b.String()
 }

@@ -550,9 +550,15 @@ operator with Prometheus can ignore the sampler.
   `kv_cache_usage_perc`); SGLang and llama.cpp follow their docs.
   Counters sum across engines, utilization takes the busiest engine, and
   several models sum unless the caller names one.
-- A counter reset is summed per segment, as Prometheus's `increase()` does,
-  and flagged. Ollama gets `ErrNoMetrics` rather than a sampler that would
-  report an idle cache.
+- Counter increases are computed per series (full label set) and summed,
+  as Prometheus's `increase()` does, so one engine restarting is counted
+  right and flagged. A run folds readings incrementally (constant memory),
+  and `Between` uses the same fold. Ollama gets `ErrNoMetrics` rather than
+  a sampler that would report an idle cache.
+- The profile's credential goes only to a same-origin metrics endpoint
+  (and a Google ADC token only over https); `Window.HitRate` comes from
+  counters only, with the server's gauge in `HitRateGauge`; a failed
+  closing scrape returns the partial window with `EndFailed`.
 - The Prometheus text parser is a small one of the library's own, so the
   core gains no dependency.
 

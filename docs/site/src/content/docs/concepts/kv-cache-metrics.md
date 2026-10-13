@@ -42,24 +42,33 @@ built-in sets it itself, for example `"metrics": "llamacpp"` beside
 
 ```go
 r, _ := profile.Resolve(ctx, p, profile.Options{})
-s, _ := kvmetrics.FromProfile(r, "")        // "" = the whole server; or one model id
+s, _ := kvmetrics.FromProfile(r, kvmetrics.Options{}) // Options.Model narrows to one model
 run, _ := s.Start(ctx, 15*time.Second)      // 0 = no polling between the endpoints
 // … the session runs …
 w, _ := run.Stop(ctx)
 ```
 
-`FromProfile` uses the profile's credential too, so a bearer-protected
-endpoint gets the same token as the API. A product that schedules its own
-scrapes calls `Snapshot` and combines readings with `Between`.
+`FromProfile` sends the profile's credential only to a metrics endpoint
+with the **same origin** (scheme, host and port) as the profile's
+`base_url`, the way package `auth` sends it to the API (a Bearer header,
+for an API key too), and never a Google ADC token over plain `http`. A
+metrics endpoint on another host is scraped without credentials. One that
+needs a different credential takes your own `Options.HTTPClient`, to which
+nothing is added.
+
+A product that schedules its own scrapes calls `Snapshot` and combines
+readings with `Between`, which folds them exactly as a `Run` does.
 
 ## What a window holds
 
 | Field | Meaning |
 |---|---|
-| `Queries`, `Hits` | Prefix-cache tokens looked up and found, increased over the window |
-| `HitRate` | `Hits / Queries`, or the server's own rate gauge when it has no counters |
+| `Queries`, `Hits` | Prefix-cache tokens looked up and found, increased over the window, computed per series and summed |
+| `HitRate` | `Hits / Queries` over the window; nil when either is missing |
+| `HitRateGauge` | The server's own hit-rate gauge at the last reading that had one: instantaneous, for servers without counters, and kept apart from `HitRate` |
 | `PeakKVUsage` | Highest KV-cache utilization (0–1) at the endpoints or any poll between |
-| `Reset` | A counter went backwards: the server restarted mid-window |
+| `Reset` | Some series' counter went backwards: an engine restarted mid-window |
+| `EndFailed` | The closing scrape failed, so the window ends at the last successful poll |
 | `Fleet` | Always `true` |
 
 Every measure is a pointer. A metric the server doesn't expose is `nil`,
@@ -67,12 +76,18 @@ Every measure is a pointer. A metric the server doesn't expose is `nil`,
 
 Polling (`Start` with an interval) is what makes `PeakKVUsage` meaningful:
 without it the peak is the higher of the two endpoints and can miss a spike
-between them. A failed poll is skipped, and `Run.PollErr` reports it.
+between them. A failed poll is skipped, and `Run.PollErr` reports it. A run
+folds readings as they arrive, so its memory doesn't grow with the session.
+If the closing scrape fails, `Stop` still returns the window up to the last
+successful reading, with `EndFailed` set, alongside the error.
 
-If the server restarts mid-window, its counters drop to zero. The increase
-is then summed per segment, the way Prometheus's `increase()` does, and
-`Reset` is set. Whatever the server served between the last reading before
-the restart and the restart itself isn't counted.
+Counter increases are computed **per series** (metric name and full label
+set), then summed, the way Prometheus's `increase()` works. So one engine
+restarting while others keep growing is counted correctly, and `Reset` is
+set. A series that appears mid-window counts from its first reading; one
+that disappears contributes up to its last. Whatever an engine served
+between the last reading before its restart and the restart itself isn't
+counted. A scrape over 16 MiB is refused rather than read in part.
 
 ## Servers
 
@@ -84,6 +99,10 @@ the restart and the restart itself isn't counted.
 | Ollama | Nothing: it exposes no KV-cache statistics. `New` returns `ErrNoMetrics` rather than a sampler that would report an idle cache | — |
 
 Counters are summed across a server's engines. Utilization takes the
-busiest engine, because an average would hide a full one. When a server
-serves several models, the default reading sums them; pass a model id to
-read only that model's series (vLLM and SGLang label them `model_name`).
+busiest engine, because an average would hide a full one; SGLang's own
+hit-rate gauge is averaged across engines, because a maximum would
+overstate it and no series exposes a weight. When a server serves several
+models, the default reading sums them; set `Options.Model` to read only
+one model's series (vLLM and SGLang label them `model_name`). A model the
+endpoint has no series for is an error naming the models it does have,
+not a reading of nils that would look like "not reported".
