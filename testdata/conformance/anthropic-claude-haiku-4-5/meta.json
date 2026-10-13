@@ -1,0 +1,9 @@
+{
+  "profile": "anthropic",
+  "dialect": "anthropic",
+  "model": "claude-haiku-4-5",
+  "request_path": "/v1/messages",
+  "recorded": "2026-10-13",
+  "server": "Anthropic first-party Messages API (api.anthropic.com) with a workspace-scoped API key, claude-haiku-4-5-20251001. Same scenarios as the anthropic-vertex corpus; the adapter streams on the wire for every call",
+  "base_path": "/"
+}

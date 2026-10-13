@@ -36,17 +36,18 @@ decisions (§2). Read it before proposing a change of shape.
   Ollama and any OpenAI-compatible endpoint): done; mast adopted it (mast
   #510), with judged tool-calling parity and a vLLM deployment end to end.
 - **L3'** (core-agent adopts provider profiles, core-agent #1294): done.
-  **L3** (`kvmetrics`, the opt-in KV-cache sampler): library side done;
-  products wiring it in (mast's `/usage`) is owed.
+  **L3** (`kvmetrics`, the opt-in KV-cache sampler): done; mast's `/usage`
+  and judged eval board report it (mast #543).
 - **L4** (`dialect/anthropic`) and **L5** (`dialect/gemini`, with
   `vertexcache`): done; mast (#521) and core-agent (#1296) both switched.
-- **L2** (`dialect/openairesp`, the `openai` and `xai` profiles): built, with
-  a corpus recorded from vLLM's `/v1/responses`; its live test against OpenAI
-  and xAI is owed until there is a key.
-- **L6** (`pricing`, one price catalog): library side done; both products
-  switching to it is owed.
-- **Owed:** live tests of Claude on Anthropic's first-party API and of
-  OpenAI and xAI.
+  Claude is recorded live on Anthropic's first-party API and on Vertex AI.
+- **L2** (`dialect/openairesp`, the `openai` and `xai` profiles): done,
+  recorded live from OpenAI, xAI and vLLM's `/v1/responses`.
+- **L6** (`pricing`, one price catalog): library side done; mast adopted it
+  (mast #544); core-agent's adoption is owed.
+- **Live keys** for OpenAI, xAI and Anthropic live in
+  `~/.config/core-models/{openai,xai,anthropic}.key` on the maintainer's
+  workstation; live tests never run in presubmit (see "Build and test").
 
 [`docs/design.md`](./docs/design.md) §11 lists the phases; the docs site's
 roadmap page tracks their status.
