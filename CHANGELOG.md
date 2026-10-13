@@ -2,7 +2,17 @@
 
 ## Unreleased
 
+## v0.8.0 (2026-10-13)
+
 ### Added
+
+- **`profile.Profile.ContextWindowFor`** (#22) returns the input window a
+  profile declares for a model (`models[].context_window`, in the schema
+  since L0, which nothing could read before). It's the window as the
+  server serves it, so a host can size compaction for a self-hosted model
+  served at less than its own window, such as vLLM's `--max-model-len`,
+  instead of assuming 128k. The vLLM fixture's example profile declares
+  65536 to match its deployments.
 
 - **`gemini.Client.SetContextCache`** (#31) installs Vertex context-cache
   hooks on a Client that's already built. Models built before it pick them

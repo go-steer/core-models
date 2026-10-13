@@ -563,3 +563,22 @@ func TestResolveKeepsTheAuthSentinel(t *testing.T) {
 		t.Errorf("Resolve = %v, want the profile named", err)
 	}
 }
+
+// TestContextWindowFor: a host sizes compaction from the window a
+// profile declares for the model as the server serves it — a vLLM at
+// --max-model-len=65536 serves less than the model could — and falls
+// back to its own table when none is declared (core-models #22).
+func TestContextWindowFor(t *testing.T) {
+	p := profile.Profile{Name: "house", Models: []profile.Model{
+		{ID: "google/gemma-4-26B-A4B-it", ContextWindow: 65536},
+		{ID: "openai/gpt-oss-120b"},
+	}}
+	if n, ok := p.ContextWindowFor("google/gemma-4-26B-A4B-it"); !ok || n != 65536 {
+		t.Errorf("declared window = %d, %v; want 65536, true", n, ok)
+	}
+	for _, id := range []string{"openai/gpt-oss-120b", "unlisted"} {
+		if n, ok := p.ContextWindowFor(id); ok {
+			t.Errorf("%s: window = %d, true; want not declared", id, n)
+		}
+	}
+}

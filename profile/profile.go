@@ -154,9 +154,13 @@ type Profile struct {
 
 // Model is one model a profile serves.
 type Model struct {
-	ID            string `json:"id" yaml:"id"`
-	Tier          Tier   `json:"tier,omitempty" yaml:"tier,omitempty"`
-	ContextWindow int    `json:"context_window,omitempty" yaml:"context_window,omitempty"`
+	ID   string `json:"id" yaml:"id"`
+	Tier Tier   `json:"tier,omitempty" yaml:"tier,omitempty"`
+	// ContextWindow is the model's input window in tokens, as this
+	// server serves it, which can be smaller than the model's own (vLLM
+	// --max-model-len). Hosts size compaction from it
+	// (ContextWindowFor); zero means not declared.
+	ContextWindow int `json:"context_window,omitempty" yaml:"context_window,omitempty"`
 	// Capabilities override the profile's for this model only.
 	Capabilities Capabilities `json:"capabilities,omitzero" yaml:"capabilities,omitempty"`
 	// ExtraBody adds vendor fields to this model's requests, over the
@@ -176,6 +180,19 @@ type Rates struct {
 	CachedInputPerMTok float64 `json:"cached_input_per_mtok,omitempty" yaml:"cached_input_per_mtok,omitempty"`
 	CacheWritePerMTok  float64 `json:"cache_write_per_mtok,omitempty" yaml:"cache_write_per_mtok,omitempty"`
 	OutputPerMTok      float64 `json:"output_per_mtok,omitempty" yaml:"output_per_mtok,omitempty"`
+}
+
+// ContextWindowFor returns the input window a profile declares for model
+// id, in tokens, and false when it declares none. A host sizing
+// compaction falls back to its own table on false: core-models has no
+// catalog of windows.
+func (p Profile) ContextWindowFor(id string) (int, bool) {
+	for _, m := range p.Models {
+		if m.ID == id && m.ContextWindow > 0 {
+			return m.ContextWindow, true
+		}
+	}
+	return 0, false
 }
 
 // RatesFor returns the declared rates for a listed model.
