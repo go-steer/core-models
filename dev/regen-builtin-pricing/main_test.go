@@ -18,8 +18,10 @@ package main
 
 import (
 	"bytes"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -821,6 +823,119 @@ func TestQualifyProfileBackends_OpenAIAndXAI(t *testing.T) {
 	for k := range want {
 		if !got[k] {
 			t.Errorf("missing %q in %v", k, got)
+		}
+	}
+}
+
+// TestDiscoverPrefixOnly covers the models LiteLLM lists only under a
+// backend prefix (gemini-4-argon arrived as gemini/ and vertex_ai/ keys
+// with no bare key, and the bare pass never saw it).
+func TestDiscoverPrefixOnly(t *testing.T) {
+	t.Parallel()
+	f := func(v float64) *float64 { return &v }
+	n := func(v int) *int { return &v }
+	yes := true
+	chat := func(in, out float64, window int) liteLLMEntry {
+		return liteLLMEntry{
+			Mode: "chat", SupportsFunctionCalling: &yes, MaxInputTokens: n(window),
+			InputCostPerToken: f(in), OutputCostPerToken: f(out),
+		}
+	}
+	tts := chat(1e-6, 2e-5, 8192)
+	tts.Mode = "audio_speech"
+	retiredBare := chat(1e-6, 5e-6, 200000)
+	retiredBare.DeprecationDate = "2020-01-01"
+	all := map[string]liteLLMEntry{
+		// On both Gemini backends, no bare key.
+		"gemini/gemini-9-argon":    chat(2e-6, 1e-5, 1048576),
+		"vertex_ai/gemini-9-argon": chat(2.5e-6, 1.2e-5, 1048576),
+		// On the Developer API only.
+		"gemini/gemini-9-devonly": chat(1e-6, 4e-6, 1048576),
+		// Claude on Vertex only, under its dated spelling.
+		"vertex_ai/claude-quill-7@20300101": chat(3e-6, 1.5e-5, 200000),
+		// Prefix-only but not a chat model.
+		"vertex_ai/gemini-9-tts": tts,
+		// Prefix-only, eligible on every field, but retired upstream.
+		"vertex_ai/gemini-3-pro-preview": chat(2e-6, 1.2e-5, 1048576),
+		// Has a bare key: the bare pass owns it, even refused.
+		"gemini-9.1-flash":           chat(1.5e-6, 9e-6, 1048576),
+		"gemini/gemini-9.1-flash":    chat(1.5e-6, 9e-6, 1048576),
+		"claude-quill-6":             retiredBare,
+		"vertex_ai/claude-quill-6":   chat(1e-6, 5e-6, 200000),
+		"vertex_ai/gemini-9.1-flash": chat(1.5e-6, 9e-6, 1048576),
+	}
+
+	bare, qualified, rejected := discoverPrefixOnly(all, today)
+
+	names := func(es []generatedEntry) []string {
+		var out []string
+		for _, e := range es {
+			out = append(out, e.Name)
+		}
+		return out
+	}
+	if got, want := names(bare), []string{"gemini-9-argon"}; !slices.Equal(got, want) {
+		t.Fatalf("bare = %v, want %v (bare gemini rows come from vertex_ai/ only)", got, want)
+	}
+	if bare[0].InputPerMTok != 2.5 || bare[0].ContextWindowTokens != 1048576 {
+		t.Errorf("bare gemini-9-argon = %+v, want the vertex_ai/ rate and its window", bare[0])
+	}
+	if got, want := names(qualified), []string{"anthropic-vertex/claude-quill-7-20300101", "gemini/gemini-9-devonly"}; !slices.Equal(got, want) {
+		t.Errorf("qualified-only = %v, want %v (off-convention models get no bare row)", got, want)
+	}
+	rej := map[string]string{}
+	for _, r := range rejected {
+		rej[r.Name] = r.Why
+	}
+	if !strings.Contains(rej["vertex_ai/gemini-9-tts"], "mode") {
+		t.Errorf("tts not rejected on mode: %v", rej)
+	}
+	if !strings.Contains(rej["vertex_ai/gemini-3-pro-preview"], "retired upstream") {
+		t.Errorf("gemini-3-pro-preview not rejected as retired: %v", rej)
+	}
+	for _, r := range append(names(bare), names(qualified)...) {
+		if strings.Contains(r, "9.1-flash") || strings.Contains(r, "quill-6") {
+			t.Errorf("%q has a bare key, so discovery must leave it to the bare pass", r)
+		}
+	}
+
+	// The discovered bare row picks up both backends' rows in the
+	// ordinary qualified pass, the Vertex one from vertex_ai/.
+	got := map[string]float64{}
+	for _, e := range qualifyByBackend(bare, all) {
+		got[e.Name] = e.InputPerMTok
+	}
+	if want := map[string]float64{"gemini/gemini-9-argon": 2, "vertex/gemini-9-argon": 2.5}; !maps.Equal(got, want) {
+		t.Errorf("qualifyByBackend(discovered) = %v, want %v", got, want)
+	}
+}
+
+// TestDiscoverPrefixOnly_LeavesBareModelsUnchanged: a model with a bare
+// key renders the same rows whether or not discovery runs.
+func TestDiscoverPrefixOnly_LeavesBareModelsUnchanged(t *testing.T) {
+	t.Parallel()
+	all, err := parse([]byte(cannedLiteLLM))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bare, qualified, _ := discoverPrefixOnly(all, today)
+	if len(bare) != 0 || len(qualified) != 0 {
+		t.Errorf("discovery added %v / %v to a catalog with no prefix-only model", bare, qualified)
+	}
+}
+
+func TestBareID(t *testing.T) {
+	t.Parallel()
+	for in, want := range map[string]string{
+		"gemini-9-argon":           "gemini-9-argon",
+		"claude-quill-7@20300101":  "claude-quill-7-20300101",
+		"claude-quill-7@default":   "claude-quill-7",
+		"gemini-1.0-pro@001":       "",
+		"claude-quill-7@2030-0101": "",
+	} {
+		got, ok := bareID(in)
+		if got != want || ok != (want != "") {
+			t.Errorf("bareID(%q) = %q, %v; want %q", in, got, ok, want)
 		}
 	}
 }

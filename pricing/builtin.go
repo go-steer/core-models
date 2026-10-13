@@ -20,8 +20,9 @@
 //
 // Membership is a rule, not a list: every Gemini and Anthropic model
 // in LiteLLM's catalog that is mode="chat", supports function calling,
-// carries a published price and window, and is not deprecated, plus the
-// rows of the profile backends (vertex-maas, openai, xai) under a
+// carries a published price and window, and is not deprecated, whether
+// LiteLLM lists it under a bare key or only under a backend prefix, plus
+// the rows of the profile backends (vertex-maas, openai, xai) under a
 // similar rule. See eligible() and eligibleProfile() in
 // dev/regen-builtin-pricing/main.go — adjust the rules there, never
 // this file.
@@ -80,6 +81,8 @@ var builtin = map[string]Rates{
 	"gemini-3.6-flash":                      {InputPerMTok: 0.75, CachedInputPerMTok: 0.075, OutputPerMTok: 3.75, UpdatedAt: time.Date(2026, 10, 13, 0, 0, 0, 0, time.UTC)},                                                                                                                                                                                                                                                         // vertex_ai-language-models
 	"gemini-3.7-flash":                      {InputPerMTok: 0.75, CachedInputPerMTok: 0.075, OutputPerMTok: 3.75, UpdatedAt: time.Date(2026, 10, 13, 0, 0, 0, 0, time.UTC)},                                                                                                                                                                                                                                                         // vertex_ai-language-models
 	"gemini-3.8-flash":                      {InputPerMTok: 0.75, CachedInputPerMTok: 0.075, OutputPerMTok: 3.75, UpdatedAt: time.Date(2026, 10, 13, 0, 0, 0, 0, time.UTC)},                                                                                                                                                                                                                                                         // vertex_ai-language-models
+	"gemini-4-argon":                        {InputPerMTok: 2, CachedInputPerMTok: 0.1, OutputPerMTok: 10, UpdatedAt: time.Date(2026, 10, 13, 0, 0, 0, 0, time.UTC)},                                                                                                                                                                                                                                                                // vertex_ai
+	"gemini-4-argon-cyber-permissive":       {InputPerMTok: 4, CachedInputPerMTok: 0.2, OutputPerMTok: 20, UpdatedAt: time.Date(2026, 10, 13, 0, 0, 0, 0, time.UTC)},                                                                                                                                                                                                                                                                // vertex_ai
 }
 
 // builtinByBackend prices the (backend, model) pair rather than the
@@ -98,7 +101,10 @@ var builtin = map[string]Rates{
 // guarantee anyone makes.
 //
 // Not every pair exists: a model a backend does not serve has no row,
-// and LookupFor falls back to the bare id for it.
+// and LookupFor falls back to the bare id for it. The reverse also
+// happens: a Claude model served only on Vertex, or a Gemini model only
+// on the Developer API, has its qualified row and no bare row, because
+// the bare row carries Anthropic's or Vertex's rate by convention.
 var builtinByBackend = map[string]Rates{
 	"anthropic-vertex/claude-fable-5":                          {InputPerMTok: 10, CachedInputPerMTok: 1, CacheCreationInputPerMTok: 12.5, CacheCreation1hInputPerMTok: 20, OutputPerMTok: 50, UpdatedAt: time.Date(2026, 10, 13, 0, 0, 0, 0, time.UTC)},                                                                                                                                                                                               // vertex_ai-anthropic_models
 	"anthropic-vertex/claude-fable-5-1":                        {InputPerMTok: 10, CachedInputPerMTok: 0.25, CacheCreationInputPerMTok: 12.5, CacheCreation1hInputPerMTok: 20, OutputPerMTok: 50, UpdatedAt: time.Date(2026, 10, 13, 0, 0, 0, 0, time.UTC)},                                                                                                                                                                                            // vertex_ai-anthropic_models
@@ -151,6 +157,7 @@ var builtinByBackend = map[string]Rates{
 	"gemini/gemini-3.6-flash":                                  {InputPerMTok: 0.75, CachedInputPerMTok: 0.075, OutputPerMTok: 3.75, UpdatedAt: time.Date(2026, 10, 13, 0, 0, 0, 0, time.UTC)},                                                                                                                                                                                                                                                         // gemini
 	"gemini/gemini-3.7-flash":                                  {InputPerMTok: 0.75, CachedInputPerMTok: 0.075, OutputPerMTok: 3.75, UpdatedAt: time.Date(2026, 10, 13, 0, 0, 0, 0, time.UTC)},                                                                                                                                                                                                                                                         // gemini
 	"gemini/gemini-3.8-flash":                                  {InputPerMTok: 0.75, CachedInputPerMTok: 0.075, OutputPerMTok: 3.75, UpdatedAt: time.Date(2026, 10, 13, 0, 0, 0, 0, time.UTC)},                                                                                                                                                                                                                                                         // gemini
+	"gemini/gemini-4-argon":                                    {InputPerMTok: 2, CachedInputPerMTok: 0.1, OutputPerMTok: 10, UpdatedAt: time.Date(2026, 10, 13, 0, 0, 0, 0, time.UTC)},                                                                                                                                                                                                                                                                // gemini
 	"openai/gpt-3.5-turbo":                                     {InputPerMTok: 0.5, OutputPerMTok: 1.5, UpdatedAt: time.Date(2026, 10, 13, 0, 0, 0, 0, time.UTC)},                                                                                                                                                                                                                                                                                      // openai
 	"openai/gpt-3.5-turbo-0125":                                {InputPerMTok: 0.5, OutputPerMTok: 1.5, UpdatedAt: time.Date(2026, 10, 13, 0, 0, 0, 0, time.UTC)},                                                                                                                                                                                                                                                                                      // openai
 	"openai/gpt-3.5-turbo-16k":                                 {InputPerMTok: 3, OutputPerMTok: 4, UpdatedAt: time.Date(2026, 10, 13, 0, 0, 0, 0, time.UTC)},                                                                                                                                                                                                                                                                                          // openai
@@ -262,6 +269,8 @@ var builtinByBackend = map[string]Rates{
 	"vertex/gemini-3.6-flash":                                  {InputPerMTok: 0.75, CachedInputPerMTok: 0.075, OutputPerMTok: 3.75, UpdatedAt: time.Date(2026, 10, 13, 0, 0, 0, 0, time.UTC)},                                                                                                                                                                                                                                                         // vertex_ai-language-models
 	"vertex/gemini-3.7-flash":                                  {InputPerMTok: 0.75, CachedInputPerMTok: 0.075, OutputPerMTok: 3.75, UpdatedAt: time.Date(2026, 10, 13, 0, 0, 0, 0, time.UTC)},                                                                                                                                                                                                                                                         // vertex_ai-language-models
 	"vertex/gemini-3.8-flash":                                  {InputPerMTok: 0.75, CachedInputPerMTok: 0.075, OutputPerMTok: 3.75, UpdatedAt: time.Date(2026, 10, 13, 0, 0, 0, 0, time.UTC)},                                                                                                                                                                                                                                                         // vertex_ai-language-models
+	"vertex/gemini-4-argon":                                    {InputPerMTok: 2, CachedInputPerMTok: 0.1, OutputPerMTok: 10, UpdatedAt: time.Date(2026, 10, 13, 0, 0, 0, 0, time.UTC)},                                                                                                                                                                                                                                                                // vertex_ai
+	"vertex/gemini-4-argon-cyber-permissive":                   {InputPerMTok: 4, CachedInputPerMTok: 0.2, OutputPerMTok: 20, UpdatedAt: time.Date(2026, 10, 13, 0, 0, 0, 0, time.UTC)},                                                                                                                                                                                                                                                                // vertex_ai
 	"xai/grok-4.20":                                            {InputPerMTok: 1.25, CachedInputPerMTok: 0.2, OutputPerMTok: 2.5, UpdatedAt: time.Date(2026, 10, 13, 0, 0, 0, 0, time.UTC), LongContext: &LongContext{ThresholdTokens: 200000, InputPerMTok: 2.5, CachedInputPerMTok: 0.4, OutputPerMTok: 5}},                                                                                                                                          // xai
 	"xai/grok-4.20-0309":                                       {InputPerMTok: 1.25, CachedInputPerMTok: 0.2, OutputPerMTok: 2.5, UpdatedAt: time.Date(2026, 10, 13, 0, 0, 0, 0, time.UTC), LongContext: &LongContext{ThresholdTokens: 200000, InputPerMTok: 2.5, CachedInputPerMTok: 0.4, OutputPerMTok: 5}},                                                                                                                                          // xai
 	"xai/grok-4.20-0309-non-reasoning":                         {InputPerMTok: 1.25, CachedInputPerMTok: 0.2, OutputPerMTok: 2.5, UpdatedAt: time.Date(2026, 10, 13, 0, 0, 0, 0, time.UTC), LongContext: &LongContext{ThresholdTokens: 200000, InputPerMTok: 2.5, CachedInputPerMTok: 0.4, OutputPerMTok: 5}},                                                                                                                                          // xai
@@ -339,6 +348,8 @@ var builtinContextWindows = map[string]int{
 	"gemini-3.6-flash":                      1048576,
 	"gemini-3.7-flash":                      1048576,
 	"gemini-3.8-flash":                      1048576,
+	"gemini-4-argon":                        1048576,
+	"gemini-4-argon-cyber-permissive":       1048576,
 }
 
 // Builtin returns a defensive copy of the compiled-in table. Used

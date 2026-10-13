@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+## v0.13.1 (2026-10-13)
+
+### Fixed
+
+- **The price table missed models LiteLLM lists only under a backend
+  prefix.** `gemini-4-argon` is live on the Gemini API and on Vertex AI
+  (`global`), and LiteLLM prices it at $2/$10 per MTok, but only as
+  `gemini/gemini-4-argon` and `vertex_ai/gemini-4-argon`. The generator read
+  only bare keys to decide which models exist, so Argon had no rate and no
+  context window, and every budget ceiling read it as free. The generator now
+  also finds models listed only under a backend prefix, and runs them through
+  the same eligibility rule. A bare Gemini row still carries Vertex's rate,
+  and a bare Claude row Anthropic's. A model served only elsewhere gets its
+  backend-qualified row alone. The regen adds `gemini-4-argon` (bare,
+  `gemini/`, `vertex/`, 1,048,576-token window) and the access-gated
+  `gemini-4-argon-cyber-permissive` (bare, `vertex/`, $4/$20). Two retired
+  models that LiteLLM still lists under `vertex_ai/` with no deprecation date,
+  `gemini-3-pro-preview` and `claude-3-sonnet`, are excluded by name.
+
 ## v0.13.0 (2026-10-13)
 
 ### API Change
