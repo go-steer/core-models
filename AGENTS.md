@@ -43,8 +43,10 @@ decisions (§2). Read it before proposing a change of shape.
 - **L2** (`dialect/openairesp`, the `openai` and `xai` profiles): built, with
   a corpus recorded from vLLM's `/v1/responses`; its live test against OpenAI
   and xAI is owed until there is a key.
-- **Owed:** L6 (one price catalog), and live tests
-  of Claude on Anthropic's first-party API and of OpenAI and xAI.
+- **L6** (`pricing`, one price catalog): library side done; both products
+  switching to it is owed.
+- **Owed:** live tests of Claude on Anthropic's first-party API and of
+  OpenAI and xAI.
 
 [`docs/design.md`](./docs/design.md) §11 lists the phases; the docs site's
 roadmap page tracks their status.
@@ -207,6 +209,8 @@ auth/                credential resolution: api_key, bearer, google_adc, none
 profile/             provider profiles: schema, built-ins, extends, Resolve
 toolwire/            the shared tool-schema invariant every adapter is held to
 kvmetrics/           opt-in KV-cache sampler: a server's Prometheus endpoint → a fleet-level Window
+pricing/             the shared price catalog: Rates, layered Catalog, LookupFor, builtin.go (generated)
+internal/litellm/    reads LiteLLM's catalog fields pricing's Refresh and the regen tool both need
 dialect/openaichat/  OpenAI Chat Completions (Vertex MaaS, vLLM, SGLang, Ollama, …)
 dialect/openairesp/  OpenAI Responses (OpenAI; opt-in for xAI and vLLM's /v1/responses)
 internal/schemajson/ genai Schema -> JSON Schema, shared by the two OpenAI dialects
@@ -219,6 +223,7 @@ adkv1/  (module)     adapter to google.golang.org/adk v1 — DEPRECATED, no user
 adkv2/  (module)     adapter to google.golang.org/adk/v2 — mast and core-agent
 docs/design.md       the design; decisions in §2
 docs/site/           Astro + Starlight user docs
+dev/regen-builtin-pricing/  generates pricing/builtin.go from LiteLLM (weekly via pricing-regen.yml)
 dev/tools/           pinned tools: lint-go, shell-lint, docs-site.sh,
                      verify-no-agent-attribution, common.sh (the module list)
 dev/ci/presubmits/   one script per CI check; all.sh runs them all
@@ -226,7 +231,7 @@ scripts/             verify-internal-links.py (docs site)
 .github/workflows/   thin delegators to dev/ci/presubmits/
 ```
 
-Future packages (`pricing/`, `conformance/`) are laid out in
+Future packages (`conformance/`) are laid out in
 [`docs/design.md`](./docs/design.md) §3. Create them in the phase that fills
 them, not before.
 

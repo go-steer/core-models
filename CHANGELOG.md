@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+### Added
+
+- **`pricing`, the price catalog both products share (L6, library half).**
+  Merged from mast's `internal/pricing` and core-agent's `pkg/pricing`:
+  - `Rates` with 5-minute and 1-hour cache-write rates and the `Cost*`
+    methods, plus **`LongContext`**: the above-threshold rates LiteLLM
+    publishes (OpenAI's 272K, Gemini's 200K, some Claude 100K), applied to
+    the whole call by `Rates.At` and every cost method. 57 builtin rows
+    carry one.
+  - The layered `Catalog` (config override, project file, user manual,
+    user external, builtin, declared), `LookupFor(backend, model)` with
+    backend-qualified rows first, `...WithSource`, `Counts`.
+  - **Declared rates**: `DeclaredFromProfiles` turns profiles'
+    `models[].rates` into the lowest layer, keyed `<backend>/<model>` and
+    labelled `profile-declared`.
+  - `Refresh` with `RefreshOptions.MaxBodyBytes` (default 32 MiB).
+  - The generated `builtin.go` and `dev/regen-builtin-pricing`, now also
+    emitting `openai` and `xai` rows; mast's 123 rows come out unchanged.
+    `.github/workflows/pricing-regen.yml` opens a weekly PR when LiteLLM
+    moves.
+  - Nothing invents a default rate: an unpriced model is a miss.
+
+  File locations, refresh cadence and config wiring stay with the
+  products. Both products switching to it is owed.
+
 ## v0.10.0 (2026-10-13)
 
 ### Added

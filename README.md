@@ -34,7 +34,7 @@ is still owed.
 
 | Module | For |
 |---|---|
-| `github.com/go-steer/core-models` | The contract (`llm`), the usage record (`usage`), profiles and the dialects above. Never imports ADK |
+| `github.com/go-steer/core-models` | The contract (`llm`), the usage record (`usage`), profiles, the dialects above, the KV-cache sampler (`kvmetrics`) and the shared price catalog (`pricing`). Never imports ADK |
 | `github.com/go-steer/core-models/adkv1` | Projects on `google.golang.org/adk` v1. **Deprecated** since v0.6.6, its last release; move to ADK v2 and `adkv2` |
 | `github.com/go-steer/core-models/adkv2` | Projects on `google.golang.org/adk/v2` |
 
