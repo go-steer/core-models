@@ -104,6 +104,24 @@ non-deprecated models, checked in `eligible()` and `eligibleProfile()`. A
 weekly workflow opens a pull request when LiteLLM's numbers move, with a "What
 moved" section that names only the rows whose value changed.
 
+## Introductory rates
+
+LiteLLM's catalog has no expiry on any row, so a promotional price keeps
+being re-read, with a fresh `UpdatedAt`, after it has ended. Fresh isn't the
+same as true. `pricing.IntroductoryRates()` lists the promotional rates whose
+end dates are known, and `IntroductoryRate.Check(rates, now)` judges a row
+against one:
+
+- before the expiry, a row still on the promotional rate is correct;
+- after it, a row still on that rate **fails**;
+- an entry marked `Resolved` (the increase was cancelled, as for
+  claude-sonnet-5) instead pins the row *at* the former promotional rate.
+
+core-models runs this over every builtin row a model is billed from, in CI
+and in the weekly regen's verify step. A product should run it too, over
+the rows it bills from, so its own build goes red when a rate it depends on
+lapses, whatever core-models version it pins.
+
 ## What stays with each product
 
 Where the pricing files live (`~/.mast`, `~/.core-agent`), whether and how
