@@ -544,7 +544,10 @@ landed differently from the plan:
   `gemini.IsBareInvalidArgument`) for it.
 - **Grounding projection splits.** The ADK-free half,
   `gemini.GroundingEvidence`, is here; the `session.Service` wrapper that
-  writes events stays with the products, since session events are ADK's.
+  writes events stayed with the products at first, since session events
+  are ADK's. *Since v0.7.0 it is `adkv2.GroundingProjection`, as this
+  section planned; mast never wired its copy and deleted it, and
+  core-agent switches to the shim.*
 - **The positional schema normalizer (#532) is Anthropic-only** and moves
   with L4; Gemini sends genai's own schema types.
 
