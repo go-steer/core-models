@@ -61,6 +61,12 @@ func (m *model) buildRequest(req *llm.Request, stream bool) (*chatRequest, map[s
 
 func (m *model) applyConfig(out *chatRequest, cfg *genai.GenerateContentConfig) (map[string]any, error) {
 	var notes map[string]any
+	// Refused, never dropped (#47): a setting Chat Completions can't carry
+	// would otherwise be answered by a different request than the one
+	// asked. openai-responses has refused the same list since it shipped.
+	if field := openaishared.UnsupportedConfig(cfg); field != "" {
+		return nil, fmt.Errorf("openai-chat: %s: Chat Completions has no equivalent, so the request is refused rather than sent without it", field)
+	}
 	if cfg.CandidateCount > 1 {
 		return nil, fmt.Errorf("openai-chat: candidate_count %d: only one candidate is supported", cfg.CandidateCount)
 	}

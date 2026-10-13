@@ -168,44 +168,8 @@ func unsupportedConfig(cfg *genai.GenerateContentConfig) string {
 		return "seed"
 	case cfg.PresencePenalty != nil || cfg.FrequencyPenalty != nil:
 		return "presence and frequency penalties"
-	case cfg.TopK != nil:
-		return "top_k"
-	case cfg.ResponseLogprobs || cfg.Logprobs != nil:
-		return "logprobs"
-	case len(cfg.SafetySettings) > 0:
-		return "safety settings"
-	case cfg.CachedContent != "":
-		return "a cached-content reference (a Gemini context cache)"
-	case !textOnly(cfg.ResponseModalities):
-		return fmt.Sprintf("response modalities %v", cfg.ResponseModalities)
-	case cfg.SpeechConfig != nil:
-		return "speech config"
-	case cfg.AudioTimestamp:
-		return "audio timestamps"
-	case cfg.ImageConfig != nil:
-		return "image config"
-	case cfg.MediaResolution != "" && cfg.MediaResolution != genai.MediaResolutionUnspecified:
-		return "media resolution"
-	case cfg.RoutingConfig != nil || cfg.ModelSelectionConfig != nil:
-		return "model routing"
-	case len(cfg.Labels) > 0:
-		return "labels"
-	case cfg.ServiceTier != "":
-		return "service tier"
-	case cfg.ModelArmorConfig != nil:
-		return "Model Armor config"
-	case cfg.EnableEnhancedCivicAnswers != nil:
-		return "enhanced civic answers"
-	case cfg.ResponseMIMEType != "" && cfg.ResponseMIMEType != "text/plain" && cfg.ResponseMIMEType != "application/json":
-		return fmt.Sprintf("response MIME type %q", cfg.ResponseMIMEType)
 	}
-	return ""
-}
-
-// textOnly reports whether modalities asks for nothing but text, which
-// is all this dialect produces. None asked for counts as text.
-func textOnly(modalities []string) bool {
-	return len(modalities) == 0 || (len(modalities) == 1 && strings.EqualFold(modalities[0], "TEXT"))
+	return openaishared.UnsupportedConfig(cfg)
 }
 
 // reasoningOf maps genai's thinking settings onto reasoning. A thinking

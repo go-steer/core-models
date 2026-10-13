@@ -810,3 +810,51 @@ func TestExtraBodyIsAddedNeverOverrides(t *testing.T) {
 		t.Error("a refused request reached the server")
 	}
 }
+
+// TestASettingChatCannotCarryIsRefused is #47: a generation setting Chat
+// Completions has no field for is refused before anything is sent, never
+// dropped, as openai-responses has always done. Settings Chat Completions
+// does carry still go out.
+func TestASettingChatCannotCarryIsRefused(t *testing.T) {
+	topK := float32(1)
+	for name, cfg := range map[string]*genai.GenerateContentConfig{
+		"top_k":           {TopK: &topK},
+		"logprobs":        {ResponseLogprobs: true},
+		"safety settings": {SafetySettings: []*genai.SafetySetting{{Category: genai.HarmCategoryHarassment, Threshold: genai.HarmBlockThresholdBlockNone}}},
+		"cached content":  {CachedContent: "projects/p/locations/l/cachedContents/c"},
+		"modalities":      {ResponseModalities: []string{"AUDIO"}},
+		"labels":          {Labels: map[string]string{"team": "sre"}},
+		"MIME type":       {ResponseMIMEType: "text/x.enum"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := newServer(t, reply{body: okReply})
+			m := client(t, s, nil).Model("Qwen/Qwen3-Coder-Next")
+			var got error
+			for _, err := range m.GenerateContent(context.Background(), &llm.Request{Contents: []*genai.Content{userText("hi")}, Config: cfg}, false) {
+				if err != nil {
+					got = err
+				}
+			}
+			if got == nil || !strings.Contains(got.Error(), "openai-chat:") {
+				t.Fatalf("error = %v, want openai-chat to refuse the setting", got)
+			}
+			s.mu.Lock()
+			sent := len(s.bodies)
+			s.mu.Unlock()
+			if sent != 0 {
+				t.Errorf("%d request(s) sent; a refused setting must not reach the server", sent)
+			}
+		})
+	}
+
+	seed := int32(7)
+	s := newServer(t, reply{body: okReply})
+	m := client(t, s, nil).Model("Qwen/Qwen3-Coder-Next")
+	complete(t, m, &llm.Request{Contents: []*genai.Content{userText("hi")}, Config: &genai.GenerateContentConfig{
+		StopSequences: []string{"END"}, Seed: &seed, PresencePenalty: genai.Ptr[float32](0.5), ResponseMIMEType: "application/json",
+	}})
+	b := s.body(0)
+	if b["stop"] == nil || b["seed"] == nil || b["presence_penalty"] == nil || b["response_format"] == nil {
+		t.Errorf("carried settings missing from the request: %v", b)
+	}
+}
