@@ -66,12 +66,12 @@ type model struct {
 	directAPI bool
 	logf      func(format string, args ...any)
 
-	// The cache hooks serve one model, cacheModel: a Vertex cache is
-	// created for a model and serves only that one.
-	cacheModel      string
-	cacheInit       ContextCacheInitFn
-	cacheName       ContextCacheNameFn
-	cacheInvalidate ContextCacheInvalidateFn
+	// cache returns the Client's context-cache hooks in force, nil on
+	// the Developer API. Read once per call, so a call never mixes the
+	// hooks from before and after a SetContextCache. The hooks serve
+	// one model, ContextCache.Model: a Vertex cache is created for a
+	// model and serves only that one.
+	cache func() *ContextCache
 
 	// mixSkipOnce limits the "built-ins skipped for this model" notice
 	// to one line per model handle; the condition does not change
@@ -120,7 +120,8 @@ func (m *model) GenerateContent(ctx context.Context, req *llm.Request, stream bo
 	// half-suppressed.
 	suppressed := callctx.BuiltinsSuppressed(ctx)
 	uncached := m.uncached(base, suppressed)
-	useCache := m.cacheable(ctx, &base, suppressed)
+	cc := m.hooks()
+	useCache := m.cacheable(ctx, cc, &base, suppressed)
 
 	// Composed innermost first: the call, cached or not; the empty-tail
 	// detector; the retry-once on an empty answer. The cache decision
@@ -130,18 +131,18 @@ func (m *model) GenerateContent(ctx context.Context, req *llm.Request, stream bo
 	// reaches here: package retry handles it below the base model.
 	return retryOnceOnEmpty(m.notef, func() iter.Seq2[*llm.Response, error] {
 		name := ""
-		if useCache && m.cacheName != nil {
-			name = m.cacheName(ctx)
+		if useCache && cc.Name != nil {
+			name = cc.Name(ctx)
 		}
 		if name == "" {
 			// Seed from the request as it is sent uncached, built-ins
 			// in, so cached and uncached turns offer the same tools.
-			if useCache && m.cacheInit != nil {
-				m.cacheInit(ctx, uncached.Config.SystemInstruction, uncached.Config.Tools)
+			if useCache && cc.Init != nil {
+				cc.Init(ctx, uncached.Config.SystemInstruction, uncached.Config.Tools)
 			}
 			return emptyTail(m.inner.GenerateContent(ctx, uncached, stream))
 		}
-		return emptyTail(m.cached(ctx, uncached, name, stream))
+		return emptyTail(m.cached(ctx, cc, uncached, name, stream))
 	})
 }
 
@@ -182,8 +183,8 @@ func (m *model) uncached(req llm.Request, suppressed bool) *llm.Request {
 //     not be set in the request when using cached content"), and the
 //     cache holds none, so stripping it would drop a forced function
 //     call or a calling mode on the floor. Such a request runs uncached.
-func (m *model) cacheable(ctx context.Context, req *llm.Request, suppressed bool) bool {
-	if m.cacheName == nil && m.cacheInit == nil {
+func (m *model) cacheable(ctx context.Context, cc ContextCache, req *llm.Request, suppressed bool) bool {
+	if cc.Name == nil && cc.Init == nil {
 		return false
 	}
 	if suppressed || callctx.PromptCacheSuppressed(ctx) || callctx.SideCallName(ctx) != "" {
@@ -193,7 +194,19 @@ func (m *model) cacheable(ctx context.Context, req *llm.Request, suppressed bool
 	if model == "" {
 		model = m.inner.Name()
 	}
-	return model == m.cacheModel && req.Config.ToolConfig == nil
+	return model == cc.Model && req.Config.ToolConfig == nil
+}
+
+// hooks is the context-cache hooks in force for this call; the zero
+// value (no hooks) on the Developer API or when none are set.
+func (m *model) hooks() ContextCache {
+	if m.cache == nil {
+		return ContextCache{}
+	}
+	if cc := m.cache(); cc != nil {
+		return *cc
+	}
+	return ContextCache{}
 }
 
 // cached sends uncached's turn against the cache name: the cache holds
@@ -202,7 +215,7 @@ func (m *model) cacheable(ctx context.Context, req *llm.Request, suppressed bool
 // (vertexcache.Gone), the manager is told and the turn is re-sent once
 // exactly as an uncached turn would be — built-ins and all — with
 // whatever the failed attempt yielded dropped.
-func (m *model) cached(ctx context.Context, uncached *llm.Request, name string, stream bool) iter.Seq2[*llm.Response, error] {
+func (m *model) cached(ctx context.Context, cc ContextCache, uncached *llm.Request, name string, stream bool) iter.Seq2[*llm.Response, error] {
 	cfg := *uncached.Config
 	cfg.CachedContent = name
 	cfg.SystemInstruction, cfg.Tools, cfg.ToolConfig = nil, nil, nil
@@ -214,10 +227,10 @@ func (m *model) cached(ctx context.Context, uncached *llm.Request, name string, 
 		case h.stopped || h.passed:
 			return
 		case h.intercepted != nil:
-			if m.cacheInvalidate != nil {
+			if cc.Invalidate != nil {
 				// Quote the error rather than name a status: this fires
 				// on an expiry 400 as readily as a 404 (core-agent #902).
-				m.cacheInvalidate(name, "GenerateContent rejected the cached content reference: "+h.intercepted.Error())
+				cc.Invalidate(name, "GenerateContent rejected the cached content reference: "+h.intercepted.Error())
 			}
 			m.notef("cached content unusable server-side (%v), retrying uncached", h.intercepted)
 			for r, err := range m.inner.GenerateContent(ctx, uncached, stream) {

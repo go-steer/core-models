@@ -64,9 +64,12 @@ func TestEvictionRetriesUncachedAndInvalidates(t *testing.T) {
 			fake := &fakeLLM{scripts: [][]fakeEvent{{{err: gone}}, {{resp: text("recovered")}}}}
 			var reasons []string
 			m := &model{
-				inner:      fake,
-				cacheModel: "gemini-3.6-flash", cacheName: func(context.Context) string { return "projects/p/locations/l/cachedContents/dead" },
-				cacheInvalidate: func(_, r string) { reasons = append(reasons, r) },
+				inner: fake,
+				cache: fixedCache(ContextCache{
+					Model:      "gemini-3.6-flash",
+					Name:       func(context.Context) string { return "projects/p/locations/l/cachedContents/dead" },
+					Invalidate: func(_, r string) { reasons = append(reasons, r) },
+				}),
 			}
 			out, err := drain(t, m.GenerateContent(context.Background(), cachedRequest(), false))
 			if err != nil || len(out) != 1 || out[0].Content.Parts[0].Text != "recovered" {
@@ -92,7 +95,7 @@ func TestEvictionLeavesOtherErrorsAndUncachedTurnsAlone(t *testing.T) {
 	notCache := errors.New(notFoundText)
 	fake := &fakeLLM{scripts: [][]fakeEvent{{{err: notCache}}}}
 	invalidated := 0
-	m := &model{inner: fake, cacheModel: "gemini-3.6-flash", cacheName: func(context.Context) string { return "c" }, cacheInvalidate: func(string, string) { invalidated++ }}
+	m := &model{inner: fake, cache: fixedCache(ContextCache{Model: "gemini-3.6-flash", Name: func(context.Context) string { return "c" }, Invalidate: func(string, string) { invalidated++ }})}
 	if _, err := drain(t, m.GenerateContent(context.Background(), cachedRequest(), false)); !errors.Is(err, notCache) {
 		t.Errorf("err = %v, want the model-not-found error untouched", err)
 	}
@@ -103,7 +106,7 @@ func TestEvictionLeavesOtherErrorsAndUncachedTurnsAlone(t *testing.T) {
 	// An uncached turn has no cache to lose: a gone-shaped error passes
 	// through.
 	fake = &fakeLLM{scripts: [][]fakeEvent{{{err: expiredErr}}}}
-	m = &model{inner: fake, cacheInvalidate: func(string, string) { invalidated++ }}
+	m = &model{inner: fake, cache: fixedCache(ContextCache{Invalidate: func(string, string) { invalidated++ }})}
 	if _, err := drain(t, m.GenerateContent(context.Background(), cachedRequest(), false)); !errors.Is(err, expiredErr) || fake.calls() != 1 {
 		t.Errorf("uncached turn: err %v over %d calls; want the error, one call", err, fake.calls())
 	}
@@ -112,7 +115,7 @@ func TestEvictionLeavesOtherErrorsAndUncachedTurnsAlone(t *testing.T) {
 func TestEvictionWithoutAnInvalidateHookStillRetries(t *testing.T) {
 	t.Parallel()
 	fake := &fakeLLM{scripts: [][]fakeEvent{{{err: reapedErr}}, {{resp: text("ok")}}}}
-	m := &model{inner: fake, cacheModel: "gemini-3.6-flash", cacheName: func(context.Context) string { return "c" }}
+	m := &model{inner: fake, cache: fixedCache(ContextCache{Model: "gemini-3.6-flash", Name: func(context.Context) string { return "c" }})}
 	if out, err := drain(t, m.GenerateContent(context.Background(), cachedRequest(), false)); err != nil || len(out) != 1 {
 		t.Errorf("got %v, %v", out, err)
 	}

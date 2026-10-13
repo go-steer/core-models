@@ -193,7 +193,7 @@ func TestASuppressedRequestGetsNeitherBuiltinsNorCache(t *testing.T) {
 	fake := &fakeLLM{}
 	m := &model{
 		inner: fake, builtins: searchAndURL(),
-		cacheModel: "gemini-3.6-flash", cacheName: func(context.Context) string { return "projects/p/locations/l/cachedContents/abc" },
+		cache: fixedCache(ContextCache{Model: "gemini-3.6-flash", Name: func(context.Context) string { return "projects/p/locations/l/cachedContents/abc" }}),
 	}
 	ctx := callctx.WithoutBuiltins(context.Background())
 	drain(t, m.GenerateContent(ctx, &llm.Request{}, false))
@@ -206,7 +206,7 @@ func TestASuppressedRequestGetsNeitherBuiltinsNorCache(t *testing.T) {
 func TestWithoutBuiltinsDropsTheInjection(t *testing.T) {
 	t.Parallel()
 	fake := &fakeLLM{}
-	m := &model{inner: fake, builtins: searchAndURL(), cacheModel: "gemini-3.6-flash", cacheName: func(context.Context) string { return "c" }}
+	m := &model{inner: fake, builtins: searchAndURL(), cache: fixedCache(ContextCache{Model: "gemini-3.6-flash", Name: func(context.Context) string { return "c" }})}
 	stripped := m.WithoutBuiltins()
 	drain(t, stripped.GenerateContent(context.Background(), &llm.Request{}, false))
 	if c := fake.last().Config; countBuiltins(c.Tools) != 0 || c.CachedContent != "" {
@@ -229,11 +229,14 @@ func TestContextCacheHooksFire(t *testing.T) {
 	fake := &fakeLLM{}
 	m := &model{
 		inner: fake, builtins: searchAndURL(),
-		cacheModel: "gemini-3.6-flash", cacheInit: func(_ context.Context, sys *genai.Content, tools []*genai.Tool) {
-			inits++
-			seenSys, seenTools = sys, tools
-		},
-		cacheName: func(context.Context) string { return name },
+		cache: fixedCache(ContextCache{
+			Model: "gemini-3.6-flash",
+			Init: func(_ context.Context, sys *genai.Content, tools []*genai.Tool) {
+				inits++
+				seenSys, seenTools = sys, tools
+			},
+			Name: func(context.Context) string { return name },
+		}),
 	}
 	sys := &genai.Content{Parts: []*genai.Part{{Text: "you are a test agent"}}}
 	drain(t, m.GenerateContent(context.Background(), &llm.Request{Config: &genai.GenerateContentConfig{SystemInstruction: sys}}, false))
@@ -251,7 +254,7 @@ func TestContextCacheHooksFire(t *testing.T) {
 		t.Errorf("CachedContent = %q, want %q", c.CachedContent, name)
 	}
 	if inits != 1 {
-		t.Errorf("cacheInit ran %d times; a cached turn must not re-seed", inits)
+		t.Errorf("Init ran %d times; a cached turn must not re-seed", inits)
 	}
 }
 
@@ -260,7 +263,7 @@ func TestContextCacheHooksFire(t *testing.T) {
 func TestCachedTurnStripsWhatVertexForbids(t *testing.T) {
 	t.Parallel()
 	fake := &fakeLLM{}
-	m := &model{inner: fake, builtins: searchAndURL(), cacheModel: "gemini-3.6-flash", cacheName: func(context.Context) string { return "c" }}
+	m := &model{inner: fake, builtins: searchAndURL(), cache: fixedCache(ContextCache{Model: "gemini-3.6-flash", Name: func(context.Context) string { return "c" }})}
 	req := &llm.Request{Config: &genai.GenerateContentConfig{
 		SystemInstruction: &genai.Content{Parts: []*genai.Part{{Text: "sys"}}},
 		Tools:             []*genai.Tool{{}, {}},

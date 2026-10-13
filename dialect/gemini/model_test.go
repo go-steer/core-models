@@ -527,3 +527,43 @@ func TestANonStreamingCallWaitsTheUnaryHeaderTimeout(t *testing.T) {
 		t.Errorf("streaming call = %v, want ErrNoResponse under the 20ms header timeout", err)
 	}
 }
+
+// TestSetContextCacheReachesModelsBuiltBefore is core-models #31: a host
+// builds one Client, makes a model, creates its cache manager from
+// Caches(), then installs the hooks. The next request on the model
+// built before is stamped with the cache; the zero ContextCache removes
+// the hooks again; hooks without a model are refused.
+func TestSetContextCacheReachesModelsBuiltBefore(t *testing.T) {
+	s := &server{steps: []func(http.ResponseWriter, *http.Request){jsonReply(200, answer)}}
+	c := vertexClient(t, s, gemini.BuiltinTools{})
+	m := c.Model("gemini-3.6-flash")
+	if c.Caches() == nil {
+		t.Fatal("Caches() is nil; a host needs it to build the manager")
+	}
+	call := func() map[string]any {
+		t.Helper()
+		if _, err := collect(t, m, context.Background(), userReq("hi"), false); err != nil {
+			t.Fatal(err)
+		}
+		return s.bodies[len(s.bodies)-1]
+	}
+	if b := call(); b["cachedContent"] != nil {
+		t.Fatalf("cachedContent before any hooks: %v", b["cachedContent"])
+	}
+	const name = "projects/p/locations/us-central1/cachedContents/abc"
+	if err := c.SetContextCache(gemini.ContextCache{Model: "gemini-3.6-flash", Name: func(context.Context) string { return name }}); err != nil {
+		t.Fatal(err)
+	}
+	if b := call(); b["cachedContent"] != name {
+		t.Errorf("cachedContent = %v after SetContextCache, want %q on the model built before", b["cachedContent"], name)
+	}
+	if err := c.SetContextCache(gemini.ContextCache{}); err != nil {
+		t.Fatal(err)
+	}
+	if b := call(); b["cachedContent"] != nil {
+		t.Errorf("cachedContent = %v after removing the hooks", b["cachedContent"])
+	}
+	if err := c.SetContextCache(gemini.ContextCache{Name: func(context.Context) string { return name }}); err == nil {
+		t.Error("hooks without a Model were accepted")
+	}
+}

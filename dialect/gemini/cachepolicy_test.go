@@ -24,15 +24,24 @@ import (
 	"github.com/go-steer/core-models/llm"
 )
 
+// fixedCache returns hooks a test can still change through the
+// pointer: m.cache().Name = ….
+func fixedCache(cc ContextCache) func() *ContextCache {
+	p := &cc
+	return func() *ContextCache { return p }
+}
+
 // cacheProbe is a model with every cache hook wired to a live cache
 // named "c", for "gemini-3.6-flash", counting seeds.
 func cacheProbe(fake *fakeLLM) (*model, *int) {
 	seeds := 0
 	return &model{
 		inner: fake, builtins: searchAndURL(),
-		cacheModel: "gemini-3.6-flash",
-		cacheName:  func(context.Context) string { return "c" },
-		cacheInit:  func(context.Context, *genai.Content, []*genai.Tool) { seeds++ },
+		cache: fixedCache(ContextCache{
+			Model: "gemini-3.6-flash",
+			Name:  func(context.Context) string { return "c" },
+			Init:  func(context.Context, *genai.Content, []*genai.Tool) { seeds++ },
+		}),
 	}, &seeds
 }
 
@@ -102,9 +111,9 @@ func TestSideCallsAndPromptCacheOptOutsLeaveTheCacheAlone(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			fake := &fakeLLM{}
 			m, seeds := cacheProbe(fake)
-			m.cacheName = func(context.Context) string { return "" } // a seed would fire here
+			m.cache().Name = func(context.Context) string { return "" } // a seed would fire here
 			drain(t, m.GenerateContent(ctx, sysReq(), false))
-			m.cacheName = func(context.Context) string { return "c" }
+			m.cache().Name = func(context.Context) string { return "c" }
 			drain(t, m.GenerateContent(ctx, sysReq(), false))
 			if c := fake.last().Config; c.CachedContent != "" || c.SystemInstruction == nil {
 				t.Errorf("stamped %q, sys %v; want the request's own, uncached", c.CachedContent, c.SystemInstruction)
@@ -142,8 +151,8 @@ func TestAnEmptyRetryDoesNotRestampAnEvictedCache(t *testing.T) {
 	live := "c"
 	var evicted []string
 	m, _ := cacheProbe(fake)
-	m.cacheName = func(context.Context) string { return live }
-	m.cacheInvalidate = func(name, _ string) {
+	m.cache().Name = func(context.Context) string { return live }
+	m.cache().Invalidate = func(name, _ string) {
 		evicted = append(evicted, name)
 		if name == live {
 			live = ""

@@ -46,6 +46,7 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"sync/atomic"
 
 	"google.golang.org/genai"
 
@@ -119,11 +120,35 @@ type Options struct {
 	Logf func(format string, args ...any)
 }
 
+// ContextCache is a set of Vertex context-cache hooks, the same four the
+// Options fields carry, for installing on a Client after it is built
+// (SetContextCache). Model is required when any hook is set.
+type ContextCache struct {
+	Model      string
+	Init       ContextCacheInitFn
+	Name       ContextCacheNameFn
+	Invalidate ContextCacheInvalidateFn
+}
+
+func (cc ContextCache) hooked() bool {
+	return cc.Init != nil || cc.Name != nil || cc.Invalidate != nil
+}
+
+func (cc ContextCache) validate() error {
+	if cc.hooked() && cc.Model == "" {
+		return errors.New("gemini: context-cache hooks need ContextCacheModel, the model the cache was created for")
+	}
+	return nil
+}
+
 // Client is a configured Gemini endpoint. Model returns an llm.LLM for
 // one model id on it. Safe for concurrent use.
 type Client struct {
 	opts   Options
 	client *genai.Client
+	// cache holds the context-cache hooks in force; models read it per
+	// call, so SetContextCache reaches models built before it.
+	cache atomic.Pointer[ContextCache]
 }
 
 // New builds a Client. On Vertex AI with no Credential it detects
@@ -168,8 +193,12 @@ func New(ctx context.Context, opts Options) (*Client, error) {
 		return nil, fmt.Errorf("gemini: backend %v is not the Developer API or Vertex AI", opts.Backend)
 	}
 
-	if (opts.ContextCacheInit != nil || opts.ContextCacheName != nil || opts.ContextCacheInvalidate != nil) && opts.ContextCacheModel == "" {
-		return nil, errors.New("gemini: context-cache hooks need ContextCacheModel, the model the cache was created for")
+	initial := ContextCache{
+		Model: opts.ContextCacheModel, Init: opts.ContextCacheInit,
+		Name: opts.ContextCacheName, Invalidate: opts.ContextCacheInvalidate,
+	}
+	if err := initial.validate(); err != nil {
+		return nil, err
 	}
 
 	base := opts.HTTPClient
@@ -213,7 +242,24 @@ func New(ctx context.Context, opts Options) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("gemini: %w", err)
 	}
-	return &Client{opts: opts, client: client}, nil
+	c := &Client{opts: opts, client: client}
+	c.cache.Store(&initial)
+	return c, nil
+}
+
+// SetContextCache installs context-cache hooks on the Client, replacing
+// any set before, and they apply from each model's next call, including
+// models built before this call. It is how a host builds one Client,
+// creates a vertexcache.Manager from Caches(), and then hooks the
+// manager in, without a second Client (core-models #31). The zero
+// ContextCache removes the hooks. Ignored on the Developer API, like
+// the Options fields.
+func (c *Client) SetContextCache(cc ContextCache) error {
+	if err := cc.validate(); err != nil {
+		return err
+	}
+	c.cache.Store(&cc)
+	return nil
 }
 
 // Model returns the model id as an llm.LLM carrying the Client's
@@ -235,10 +281,7 @@ func (c *Client) Model(id string) llm.LLM {
 		logf:      c.opts.Logf,
 	}
 	if isVertex {
-		w.cacheModel = c.opts.ContextCacheModel
-		w.cacheInit = c.opts.ContextCacheInit
-		w.cacheName = c.opts.ContextCacheName
-		w.cacheInvalidate = c.opts.ContextCacheInvalidate
+		w.cache = c.cache.Load
 	}
 	return w
 }
