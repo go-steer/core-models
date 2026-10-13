@@ -171,6 +171,7 @@ var builtins = map[string]Profile{
 	"vllm": {
 		Name:       "vllm",
 		Dialect:    OpenAIChat,
+		Metrics:    MetricsVLLM,
 		Auth:       auth.Config{Kind: auth.None},
 		OpenModels: yes(),
 		Capabilities: Capabilities{
@@ -181,6 +182,7 @@ var builtins = map[string]Profile{
 	"sglang": {
 		Name:       "sglang",
 		Dialect:    OpenAIChat,
+		Metrics:    MetricsSGLang,
 		Auth:       auth.Config{Kind: auth.None},
 		OpenModels: yes(),
 		Capabilities: Capabilities{
@@ -195,6 +197,7 @@ var builtins = map[string]Profile{
 	"ollama": {
 		Name:            "ollama",
 		Dialect:         OpenAIChat,
+		Metrics:         MetricsNone,
 		BaseURL:         "http://localhost:11434/v1",
 		ReasoningFormat: ThinkTags,
 		Auth:            auth.Config{Kind: auth.None},
@@ -347,6 +350,9 @@ func Expand(p Profile) (Profile, error) {
 	}
 	if p.MetricsURL != "" {
 		out.MetricsURL = p.MetricsURL
+	}
+	if p.Metrics != "" {
+		out.Metrics = p.Metrics
 	}
 	if len(p.Models) > 0 {
 		out.Models = slices.Clone(p.Models)

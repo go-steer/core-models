@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### Added
+
+- **`kvmetrics`, the opt-in KV-cache sampler (L3).** It reads a self-hosted
+  server's Prometheus endpoint (a profile's `metrics_url`) and reports, for
+  a window the caller chooses: prefix-cache tokens queried and hit, the hit
+  rate, and peak KV utilization, with background polling for the peak.
+  - Results are **fleet-level**: the whole server's activity, never
+    attributed to a request or folded into usage or cost.
+  - A metric the server doesn't expose stays nil.
+  - Readers for vLLM (verified live on 0.31), SGLang and llama.cpp; Ollama
+    gets `ErrNoMetrics`.
+  - Increases are computed per series and summed, so one engine
+    restarting mid-window is counted correctly and flagged.
+  - The profile's credential is sent only to a metrics endpoint with the
+    same origin as the API, and a Google ADC token only over https.
+  - A new profile field, `metrics` (`vllm`, `sglang`, `llamacpp`, `none`),
+    names the vocabulary. The `vllm`, `sglang` and `ollama` built-ins set
+    it, and extending profiles inherit it.
+
 ## v0.9.0 (2026-10-13)
 
 ### Added

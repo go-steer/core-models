@@ -604,3 +604,29 @@ func TestVendorProfilesPriceUnderTheVendor(t *testing.T) {
 		}
 	}
 }
+
+// TestMetricsFormat: the vllm, sglang and ollama built-ins name their
+// metrics vocabulary, a profile extending one inherits it unless it says
+// otherwise, and an unknown value is refused.
+func TestMetricsFormat(t *testing.T) {
+	for name, want := range map[string]profile.MetricsFormat{
+		"vllm": profile.MetricsVLLM, "sglang": profile.MetricsSGLang, "ollama": profile.MetricsNone,
+	} {
+		p, _ := profile.Builtin(name)
+		if p.Metrics != want {
+			t.Errorf("%s: metrics = %q, want %q", name, p.Metrics, want)
+		}
+	}
+	got, err := profile.Expand(profile.Profile{Name: "lab", Extends: "vllm"})
+	if err != nil || got.Metrics != profile.MetricsVLLM {
+		t.Errorf("extending vllm: metrics = %q, %v", got.Metrics, err)
+	}
+	got, err = profile.Expand(profile.Profile{Name: "lcpp", Extends: "openai-compatible", Metrics: profile.MetricsLlamaCpp})
+	if err != nil || got.Metrics != profile.MetricsLlamaCpp {
+		t.Errorf("declared llamacpp: metrics = %q, %v", got.Metrics, err)
+	}
+	bad := profile.Profile{Name: "x", Dialect: profile.OpenAIChat, BaseURL: "http://h/v1", Auth: auth.Config{Kind: auth.None}, Metrics: "prometheus"}
+	if err := bad.Validate(); err == nil || !strings.Contains(err.Error(), "metrics") {
+		t.Errorf("Validate = %v, want the unknown metrics format refused", err)
+	}
+}
