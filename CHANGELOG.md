@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Documentation
+
+- **Claude on Anthropic's first-party API is recorded live**
+  (`testdata/conformance/anthropic-claude-haiku-4-5`, with a workspace-scoped
+  key), next to the Vertex AI recording. That closes the last live-test gap:
+  every dialect and built-in vendor profile now replays a real recording in
+  presubmit.
+
 ## v0.11.1 (2026-10-13)
 
 ### Fixed
