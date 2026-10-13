@@ -160,11 +160,22 @@ var familyPrefixes = []string{"gemini-", "claude-"}
 // The bare rows this generator has always emitted are therefore a
 // mixture of two backends, which is exactly the ambiguity the qualified
 // rows remove.
-var backends = []struct{ Backend, Prefix, Family string }{
-	{"anthropic", "", "claude-"},
-	{"anthropic-vertex", "vertex_ai/", "claude-"},
-	{"gemini", "gemini/", "gemini-"},
-	{"vertex", "", "gemini-"},
+//
+// Convention marks the backend whose rate a family's bare row carries:
+// Anthropic for claude-*, Vertex for gemini-*. Discover is where LiteLLM
+// lists a model of the family that has NO bare key at all, which happens:
+// gemini-4-argon arrived as gemini/gemini-4-argon and
+// vertex_ai/gemini-4-argon only. Empty means a model missing from the
+// bare table cannot turn up on that backend (Anthropic's first-party rows
+// ARE the bare table). See discoverPrefixOnly.
+var backends = []struct {
+	Backend, Prefix, Family, Discover string
+	Convention                        bool
+}{
+	{Backend: "anthropic", Prefix: "", Family: "claude-", Convention: true},
+	{Backend: "anthropic-vertex", Prefix: "vertex_ai/", Family: "claude-", Discover: "vertex_ai/"},
+	{Backend: "gemini", Prefix: "gemini/", Family: "gemini-", Discover: "gemini/"},
+	{Backend: "vertex", Prefix: "", Family: "gemini-", Discover: "vertex_ai/", Convention: true},
 }
 
 // profileBackends are backends reached through a core-models built-in
@@ -212,6 +223,21 @@ var nameExclusions = []struct{ Pattern, Why string }{
 	{"realtime", "realtime (bidi) model; a protocol the dialects do not speak"},
 	{"transcribe", "speech-to-text model; not a chat agent"},
 	{"tts", "text-to-speech model; not a chat agent"},
+}
+
+// retiredUpstream drops exact model ids the provider has retired but
+// LiteLLM still lists without a deprecation_date. Each is a prefixed copy
+// left behind when upstream removed the bare key, so only
+// discoverPrefixOnly can reach it; the bare pass never saw them. Name
+// the evidence, so a future reader can tell whether the entry still
+// earns its place.
+var retiredUpstream = map[string]string{
+	"gemini-3-pro-preview": "shut down on both backends: the Gemini API answers 404 \"no longer " +
+		"available … use gemini-3.1-pro-preview\" and Vertex global 404s (probed 2026-10-13); " +
+		"LiteLLM kept vertex_ai/gemini-3-pro-preview after dropping the bare key",
+	"claude-3-sonnet": "Claude 3 Sonnet was retired on Anthropic's API and on Vertex; " +
+		"LiteLLM kept the vertex_ai/ rows with no deprecation_date",
+	"claude-3-sonnet-20240229": "the dated spelling of claude-3-sonnet (vertex_ai/claude-3-sonnet@20240229)",
 }
 
 // liteLLMEntry mirrors the subset of LiteLLM's schema the generator
@@ -315,6 +341,11 @@ func main() {
 	now := time.Now().UTC().Truncate(24 * time.Hour)
 
 	kept, rejected := selectModels(all, now)
+	found, foundQualified, foundRejected := discoverPrefixOnly(all, now)
+	kept = append(kept, found...)
+	sort.Slice(kept, func(i, j int) bool { return kept[i].Name < kept[j].Name })
+	rejected = append(rejected, foundRejected...)
+	sort.Slice(rejected, func(i, j int) bool { return rejected[i].Name < rejected[j].Name })
 	if len(kept) == 0 {
 		die("no models satisfied eligible() — LiteLLM's schema has probably shifted; " +
 			"inspect --source and the field names on liteLLMEntry before assuming the catalog emptied")
@@ -333,6 +364,7 @@ func main() {
 	}
 
 	qualified := qualifyByBackend(kept, all)
+	qualified = append(qualified, foundQualified...)
 	qualified = append(qualified, qualifyProfileBackends(all, now)...)
 	sort.Slice(qualified, func(i, j int) bool { return qualified[i].Name < qualified[j].Name })
 	kept = dedupeNames(kept)
@@ -716,6 +748,9 @@ func eligible(name string, e liteLLMEntry, today time.Time) (ok bool, family boo
 			return false, true, fmt.Sprintf("name contains %q: %s", x.Pattern, x.Why)
 		}
 	}
+	if why, retired := retiredUpstream[name]; retired {
+		return false, true, "retired upstream: " + why
+	}
 	return true, true, ""
 }
 
@@ -805,6 +840,117 @@ func selectModels(all map[string]liteLLMEntry, today time.Time) ([]generatedEntr
 	return kept, rejected
 }
 
+// discoverPrefixOnly finds the Gemini and Anthropic models LiteLLM lists
+// only under a backend prefix, with no bare key at all, and returns the
+// rows the bare pass would have missed: bare rows (each implying a
+// context-window row), backend-qualified rows that have no bare row to
+// hang off, and the near-misses.
+//
+// Only an id with no bare key under any spelling is considered. A bare
+// key that eligible() refused stays refused: a prefixed copy that
+// LiteLLM forgot to deprecate must not resurrect it.
+//
+// Which rows a discovered model gets follows the convention the bare
+// table already has (see backends): a bare gemini-* row is Vertex's rate,
+// a bare claude-* row is Anthropic first-party's.
+//
+//   - Listed on the family's convention backend (a gemini model under
+//     vertex_ai/): eligible() decides on that entry, under the bare id, and
+//     a pass yields the bare row from it. qualifyByBackend then adds every
+//     backend's row, exactly as for a model the bare pass found.
+//   - Listed only off-convention (a Claude model only on Vertex, a Gemini
+//     model only on the Developer API): eligible() decides per entry, and
+//     a pass yields that backend's qualified row and nothing else. A bare
+//     row would claim a rate on a backend that does not serve the model,
+//     and the window table stays keyed on bare rows.
+func discoverPrefixOnly(all map[string]liteLLMEntry, today time.Time) (bare, qualified []generatedEntry, rejected []rejection) {
+	ids := map[string]bool{}
+	for key := range all {
+		for _, b := range backends {
+			model, ok := strings.CutPrefix(key, b.Discover)
+			if b.Discover == "" || !ok || strings.Contains(model, "/") || !strings.HasPrefix(model, b.Family) {
+				continue
+			}
+			if id, ok := bareID(model); ok {
+				if _, hasBare := all[id]; !hasBare {
+					ids[id] = true
+				}
+			}
+		}
+	}
+	sorted := make([]string, 0, len(ids))
+	for id := range ids {
+		sorted = append(sorted, id)
+	}
+	sort.Strings(sorted)
+
+	for _, id := range sorted {
+		var convention *liteLLMEntry
+		for _, b := range backends {
+			if b.Convention && strings.HasPrefix(id, b.Family) && b.Discover != "" {
+				if e, key, ok := findListed(all, b.Discover, id); ok {
+					if ok, _, why := eligible(id, e, today); !ok {
+						rejected = append(rejected, rejection{Name: key, Why: why})
+					} else {
+						convention = &e
+					}
+					break
+				}
+			}
+		}
+		if convention != nil {
+			bare = append(bare, ratesOf(id, *convention))
+			continue
+		}
+		for _, b := range backends {
+			if b.Convention || b.Discover == "" || !strings.HasPrefix(id, b.Family) {
+				continue
+			}
+			e, key, ok := findListed(all, b.Discover, id)
+			if !ok {
+				continue
+			}
+			if ok, _, why := eligible(id, e, today); !ok {
+				rejected = append(rejected, rejection{Name: key, Why: why})
+				continue
+			}
+			qualified = append(qualified, ratesOf(b.Backend+"/"+id, e))
+		}
+	}
+	return bare, qualified, rejected
+}
+
+// bareID turns a prefixed key's model part into the id the bare table
+// would use: Vertex's "<base>@<YYYYMMDD>" becomes "<base>-<YYYYMMDD>" and
+// "<base>@default" becomes "<base>" (the inverse of upstreamKeys). Any
+// other "@" suffix has no bare spelling, so it reports false.
+func bareID(model string) (string, bool) {
+	if base, ok := strings.CutSuffix(model, "@default"); ok {
+		return base, true
+	}
+	i := strings.LastIndex(model, "@")
+	if i < 0 {
+		return model, true
+	}
+	if isDateSuffix(model[i+1:]) {
+		return model[:i] + "-" + model[i+1:], true
+	}
+	return "", false
+}
+
+// findListed returns the first of id's spellings under prefix that
+// LiteLLM lists, and the key it was listed under, whatever its contents:
+// unlike findUpstream it does not screen costs, because the caller hands
+// the entry to eligible(), which does, and reports why.
+func findListed(all map[string]liteLLMEntry, prefix, id string) (liteLLMEntry, string, bool) {
+	for _, key := range upstreamKeys(prefix, id) {
+		if e, ok := all[key]; ok {
+			return e, key, true
+		}
+	}
+	return liteLLMEntry{}, "", false
+}
+
 // ratesOf reads the rate fields off one LiteLLM entry and labels them
 // with the map key they will be emitted under. Shared by the bare-id
 // pass and the backend-qualified pass so a rate can never be read one
@@ -870,6 +1016,11 @@ func qualifyByBackend(kept []generatedEntry, all map[string]liteLLMEntry) []gene
 				continue
 			}
 			e, ok := findUpstream(all, b.Prefix, k.Name)
+			if !ok && b.Discover != "" && b.Discover != b.Prefix {
+				// A model discoverPrefixOnly found has no unprefixed
+				// Vertex row; its Vertex rate is the vertex_ai/ one.
+				e, ok = findUpstream(all, b.Discover, k.Name)
+			}
 			if !ok {
 				continue
 			}
@@ -1048,8 +1199,9 @@ func fileHeader(updatedAt time.Time, source string) string {
 //
 // Membership is a rule, not a list: every Gemini and Anthropic model
 // in LiteLLM's catalog that is mode="chat", supports function calling,
-// carries a published price and window, and is not deprecated, plus the
-// rows of the profile backends (vertex-maas, openai, xai) under a
+// carries a published price and window, and is not deprecated, whether
+// LiteLLM lists it under a bare key or only under a backend prefix, plus
+// the rows of the profile backends (vertex-maas, openai, xai) under a
 // similar rule. See eligible() and eligibleProfile() in
 // dev/regen-builtin-pricing/main.go — adjust the rules there, never
 // this file.
@@ -1092,7 +1244,10 @@ const byBackendDoc = `// builtinByBackend prices the (backend, model) pair rathe
 // guarantee anyone makes.
 //
 // Not every pair exists: a model a backend does not serve has no row,
-// and LookupFor falls back to the bare id for it.
+// and LookupFor falls back to the bare id for it. The reverse also
+// happens: a Claude model served only on Vertex, or a Gemini model only
+// on the Developer API, has its qualified row and no bare row, because
+// the bare row carries Anthropic's or Vertex's rate by convention.
 `
 
 // contextWindowDoc documents the generated window table in the output

@@ -149,6 +149,12 @@ func TestBuiltinByBackend_Shape(t *testing.T) {
 	// (zai-org/glm-5.2-maas, gpt-5.1, grok-4.7): no bare row, no
 	// context-window row.
 	profileBackends := map[string]bool{"vertex-maas": true, "openai": true, "xai": true}
+	// Off-convention backends may also carry a row with no bare row: a
+	// Claude model only on Vertex, or a Gemini model only on the Developer
+	// API, since the bare row carries Anthropic's or Vertex's rate (the
+	// generator's discoverPrefixOnly). None exists as of the 2026-10-13
+	// regen.
+	offConvention := map[string]bool{"anthropic-vertex": true, "gemini": true}
 	bare := Builtin()
 	qualified := BuiltinByBackend()
 	if len(qualified) == 0 {
@@ -164,7 +170,7 @@ func TestBuiltinByBackend_Shape(t *testing.T) {
 			t.Errorf("%q names backend %q, which no built-in profile reports; "+
 				"a key nothing can construct is a row nothing will ever read", key, backend)
 		}
-		if _, ok := bare[model]; !ok && !profileBackends[backend] {
+		if _, ok := bare[model]; !ok && !profileBackends[backend] && !offConvention[backend] {
 			t.Errorf("%q prices a model the bare table does not carry; "+
 				"the fallback path and the tier/context-window tables all key on %q", key, model)
 		}
@@ -188,6 +194,8 @@ var vertexOnlyGemini = map[string]string{
 		"regen and kept the vertex_ai-language-models one",
 	"gemini-2.5-flash-lite-preview-09-2025": "same as gemini-2.5-flash-preview-09-2025, " +
 		"same regen",
+	"gemini-4-argon-cyber-permissive": "LiteLLM lists it as vertex_ai/ only (2026-10-13); " +
+		"an access-gated variant of gemini-4-argon",
 }
 
 // Every model is priced on the backend that actually serves it. Claude
