@@ -4,6 +4,14 @@
 
 ### Documentation
 
+- **mast prices from `pricing`** (mast #544). Its own catalog, regen tool
+  and weekly workflow are gone. mast keeps an introductory-rate expiry
+  check over `pricing.Builtin()`, sends each core-models pin bump to a
+  human with a "what moved" rate diff, and leaves Dependabot's automerge
+  off for core-models. core-agent's adoption is still owed.
+
+### Documentation
+
 - **L3 is done.** mast #543 consumes `kvmetrics`: `/usage` reports a
   fleet-level prefix-cache window for the last turn and the session, and
   the judged eval board reports one per incident. Live against our vLLM
