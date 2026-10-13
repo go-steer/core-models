@@ -422,10 +422,23 @@ reasoning. Usage maps `input_tokens_details.cached_tokens` and
   `openai` and `xai`, so a derived profile prices under the vendor. Any profile can set
   that dialect: vLLM serves `/v1/responses`, and the conformance corpus
   records Gemma 4 on our vLLM through it.
-- **Owed:** the L2 exit criterion's live tool loop against OpenAI and xAI,
-  and an encrypted-reasoning recording from a real OpenAI reasoning model.
-  No key is available; the encrypted round trip is covered offline against
-  OpenAI's documented response shape.
+- **Live (2026-10-13).** The L2 exit criterion is met; all three are
+  recorded in the conformance corpus and replay in presubmit:
+  - **OpenAI `gpt-5-mini`** over Responses: the tool round trip replays the
+    encrypted reasoning item (its id and about 2.8K characters of
+    `encrypted_content`) before the function call it led to, and OpenAI
+    accepts it.
+  - **OpenAI `gpt-4.1-mini`** (no reasoning) accepted
+    `include: ["reasoning.encrypted_content"]` with a 200. The
+    self-correcting retry on a 400 naming `include` stays as a guard for
+    models that do refuse it, but it didn't fire here.
+  - **xAI `grok-4.20-0309-reasoning`** over Chat Completions and over
+    Responses. xAI counts reasoning tokens *beside* completion/output
+    tokens (prompt + output + reasoning = total), where OpenAI counts them
+    inside. The shared usage mapping had assumed OpenAI's convention and
+    subtracted reasoning from output, which zeroed or shrank an xAI
+    answer's tokens. It now tells the conventions apart by `total_tokens`
+    (v0.11.1).
 
 ### 7.3 `anthropic` (L4) and `gemini` (L5): extraction
 
@@ -676,7 +689,7 @@ Choices the design left open:
 |---|---|---|
 | **L0** | Repo, CI, the `llm`/`usage`/`callctx`/`retry`/`auth`/`profile` skeleton, `adkv1` + `adkv2` shims, `toolwire`, a conformance harness | Both shims pass a round-trip test with a fake `llm.LLM`; mast and core-agent build against the library through `go.work` with no behavior change |
 | **L1** | `openai-chat` and the profiles `openai-compatible`, `vertex-maas`, `vllm`, `sglang`, `ollama` | Conformance corpus green offline. **mast adopts it:** mast's M1 profile wiring resolves `--provider <profile>`, and a vLLM profile runs the triage bundle end to end with tokens per turn and `$—`. A live run against Vertex MaaS (gpt-oss-20b) and a local Ollama |
-| **L2** | `openai-responses`, plus the `openai` and `xai` profiles | Encrypted-reasoning round-trip in the corpus; live tool loop against OpenAI and xAI |
+| **L2** | `openai-responses`, plus the `openai` and `xai` profiles | Encrypted-reasoning round-trip in the corpus; live tool loop against OpenAI and xAI. *Done 2026-10-13: recorded live from OpenAI (gpt-5-mini) and xAI (grok-4.20, Chat and Responses)* |
 | **L3** | `kvmetrics` sampler with vLLM, SGLang and llama.cpp parsers; the `cached_tokens: unreliable` flag | mast `/usage` shows a session-scoped prefix-cache hit rate labeled fleet-level, against a real vLLM. *Done 2026-10-13: library v0.10.0; mast #543 reports last-turn and session windows in `/usage` and per incident on the judged board, live on our vLLM 0.31* |
 | **L3'** | **core-agent adopts L1–L3** through `adkv1`: `models.Register` gains profile-backed providers, `config.json` gains a profile section, and `--provider` opens up | core-agent `--provider vllm --model …` drives a tool loop; existing Gemini and Anthropic paths unchanged. *Done 2026-10-10 (core-agent #1294), before L2 and L3 (both since built)* |
 | **L4** | Extract Anthropic (first-party and Vertex), merging in core-agent's caching and sidecar; both products switch | Both products' toolwire and cache-accounting tests green on the library adapter, including mast's #352 measured-turn fixture and core-agent's 1-hour-TTL accounting; core-agent prompt caching available to mast. *Done 2026-10-12: library side 2026-10-10 (§7.3 "As built"); mast #521 and core-agent #1296 switched, with judged-eval and live parity* |

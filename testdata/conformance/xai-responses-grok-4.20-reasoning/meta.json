@@ -1,0 +1,8 @@
+{
+  "profile": "xai",
+  "dialect": "openai-responses",
+  "model": "grok-4.20-0309-reasoning",
+  "request_path": "/v1/responses",
+  "recorded": "2026-10-13",
+  "server": "xAI first-party Responses API via a profile extending xai with dialect openai-responses. Reasoning tokens counted beside output_tokens, as on Chat Completions"
+}

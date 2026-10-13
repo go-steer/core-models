@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+## v0.11.1 (2026-10-13)
+
+### Fixed
+
+- **xAI usage counts a reasoning reply's answer.** xAI reports reasoning
+  tokens beside completion/output tokens (prompt + output + reasoning =
+  total); OpenAI reports them inside. The shared OpenAI usage mapping
+  assumed OpenAI's convention and subtracted reasoning from output, so an
+  xAI reasoning reply's answer tokens came out as zero, or short whenever
+  the answer outran the reasoning, and its cost came out low. It now tells
+  the two apart by `total_tokens`. Found by the first live run against
+  xAI.
+
+### Documentation
+
+- **L2's exit criterion is met.** Live tool loops are recorded in the
+  conformance corpus: OpenAI `gpt-5-mini` over Responses, with the
+  encrypted-reasoning round trip accepted by OpenAI, and xAI
+  `grok-4.20-0309-reasoning` over Chat Completions and over Responses. The
+  replay test supplies placeholder first-party keys, since the recorder
+  drops headers.
+
 ### Documentation
 
 - **mast prices from `pricing`** (mast #544). Its own catalog, regen tool
