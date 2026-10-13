@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Added
+
+- **`gemini.Client.SetContextCache`** (#31) installs Vertex context-cache
+  hooks on a Client that's already built. Models built before it pick them
+  up on their next call. A host can now make one Client, build its
+  `vertexcache.Manager` from `Caches()`, and hook it in, where before it
+  needed a second Client: a second credential resolution and connection
+  pool. The new `gemini.ContextCache` type bundles the four hooks; the
+  `Options` fields still set the initial hooks. A model reads the hooks
+  once per call, so a call never mixes old and new.
+
 ### Fixed
 
 - **A Claude-on-Vertex error names the endpoint actually called** (#35).
