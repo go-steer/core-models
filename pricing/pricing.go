@@ -19,7 +19,9 @@
 // and operators add overrides. It is the one catalog mast and core-agent
 // share (design §9, phase L6).
 //
-// Lookup chain (first exact match wins; longest prefix only at the end):
+// Layers, highest precedence first (LookupForWithSource has the exact
+// order; in short, an exact key in any layer beats every prefix, and a
+// higher layer beats a lower one):
 //
 //  1. Options.CfgOverride — the product's own per-model override (its
 //     config file), keyed by model name, case-insensitive.
@@ -32,7 +34,7 @@
 //  6. Options.Declared — rates a provider profile declares
 //     (models[].rates), labelled SourceDeclared. Lowest, so a model any
 //     catalog prices is never billed at an operator's estimate.
-//  7. longest-prefix match across the merge of (1)..(6) — handles
+//  7. longest-prefix match, layer by layer in the same order — handles
 //     `gemini-3.1-pro-preview-customtools`-style suffixes.
 //  8. (Rates{}, false) — rate unknown. Callers render "$—", never "$0":
 //     a self-hosted model nobody priced is unpriced, and nothing here
@@ -261,6 +263,8 @@ type Catalog struct {
 	userExt     map[string]Rates // <UserHome>/pricing.json "external"
 	builtin     map[string]Rates // compiled-in fallback
 	declared    map[string]Rates // provider profiles' declared rates
+
+	layers []layerWithSource // the maps above, in precedence order
 }
 
 // Layer source names surfaced via LookupWithSource and the products'
@@ -282,8 +286,8 @@ const (
 // !found means the caller should treat the cost as unknown ($—)
 // rather than zero.
 //
-// Resolution: exact match scan across layers in precedence order,
-// then a longest-prefix scan across the union of all layers.
+// Lookup is LookupFor with no backend; see LookupForWithSource for the
+// resolution order.
 func (c *Catalog) Lookup(modelID string) (Rates, bool) {
 	r, _, ok := c.LookupWithSource(modelID)
 	return r, ok
@@ -303,12 +307,12 @@ func (c *Catalog) Lookup(modelID string) (Rates, bool) {
 // mixture — LiteLLM's unprefixed claude-* rates are first-party
 // Anthropic while its unprefixed gemini-* rates are Vertex.
 //
-// Resolution is qualified-then-bare: the "<backend>/<model>" key first
-// (through the full layer precedence, so an operator override of a
-// qualified key still wins), and the bare model id if no qualified row
-// exists. The fallback is what makes this safe to call everywhere —
-// a pair no table prices resolves exactly as Lookup would, rather than
-// reporting the model unpriced and dropping the session's cost to zero.
+// Both the "<backend>/<model>" key and the bare model id are consulted,
+// layer by layer, so an operator's bare override still beats a builtin
+// qualified row; see LookupForWithSource for the exact order. The bare
+// fallback is what makes this safe to call everywhere — a pair no table
+// qualifies resolves exactly as Lookup would, rather than reporting the
+// model unpriced and dropping the session's cost to zero.
 //
 // An empty backend is exactly Lookup, which is the right behavior for
 // an offline fake or a model whose backend could not be resolved.
@@ -319,59 +323,89 @@ func (c *Catalog) LookupFor(backend, modelID string) (Rates, bool) {
 
 // LookupForWithSource is LookupFor plus the layer that served the rate.
 // See LookupWithSource for the source-name vocabulary.
+//
+// Resolution runs in two phases, and the first hit wins:
+//
+//  1. Exact. For each layer in precedence order (cfg-override,
+//     project-file, user-manual, user-external, builtin, declared):
+//     the qualified key "<backend>/<model>", then the bare model id.
+//  2. Prefix, only when no layer holds an exact key. For each layer in
+//     the same order: the longest key that prefixes the qualified key
+//     (and is longer than "<backend>/"), then the longest key that
+//     prefixes the bare id.
+//
+// Layer precedence therefore outranks qualification: an operator's
+// bare override beats a builtin qualified row, because the operator
+// wrote it and the builtin did not. Exactness outranks both: a dated
+// id with its own bare row is never billed at a qualified family
+// prefix. Within one layer, qualified beats bare at the same phase,
+// which is the point of a qualified key.
 func (c *Catalog) LookupForWithSource(backend, modelID string) (Rates, string, bool) {
+	if c == nil {
+		return Rates{}, "", false
+	}
+	bare := strings.ToLower(strings.TrimSpace(modelID))
+	if bare == "" {
+		return Rates{}, "", false
+	}
+	var qual string
+	backend = strings.ToLower(strings.TrimSpace(backend))
 	if backend != "" {
-		if r, src, ok := c.LookupWithSource(backend + "/" + modelID); ok {
-			return r, src, true
+		qual = backend + "/" + bare
+	}
+	layers := c.layersWithSource()
+	for _, ls := range layers {
+		if qual != "" {
+			if r, ok := ls.layer[qual]; ok {
+				return r, ls.source, true
+			}
+		}
+		if r, ok := ls.layer[bare]; ok {
+			return r, ls.source, true
 		}
 	}
-	return c.LookupWithSource(modelID)
+	for _, ls := range layers {
+		if qual != "" {
+			if r, ok := longestPrefix(ls.layer, qual, len(backend)+1); ok {
+				return r, ls.source, true
+			}
+		}
+		if r, ok := longestPrefix(ls.layer, bare, 0); ok {
+			return r, ls.source, true
+		}
+	}
+	return Rates{}, "", false
 }
 
 // LookupWithSource is Lookup + the name of the catalog layer that
 // served the rate (SourceCfgOverride / SourceProjectFile /
-// SourceUserManual / SourceUserExternal / SourceBuiltin). Empty
-// source string when !ok. Products show it so operators can spot
-// stale builtin rates that should have been overridden by a fresh
-// LiteLLM refresh but weren't — the visibility that #259 asked for.
+// SourceUserManual / SourceUserExternal / SourceBuiltin /
+// SourceDeclared). Empty source string when !ok. Products show it so
+// operators can spot stale builtin rates that should have been
+// overridden by a fresh LiteLLM refresh but weren't — the visibility
+// that #259 asked for.
 //
-// Resolution matches Lookup: exact match by precedence first, then
-// longest-prefix across the union. The prefix-fallback path returns
-// the source of the LAYER that held the winning prefix entry.
+// Resolution is LookupForWithSource's with no qualified key: an exact
+// match by layer precedence, then the longest prefix within the first
+// layer that holds one.
 func (c *Catalog) LookupWithSource(modelID string) (Rates, string, bool) {
-	if c == nil {
-		return Rates{}, "", false
+	return c.LookupForWithSource("", modelID)
+}
+
+// longestPrefix returns the row whose key is the longest prefix of key
+// that is longer than minLen bytes. It probes the map once per
+// candidate length instead of scanning every key, so a miss costs at
+// most len(key) lookups however large the layer is.
+func longestPrefix(layer map[string]Rates, key string, minLen int) (Rates, bool) {
+	if len(layer) == 0 {
+		return Rates{}, false
 	}
-	low := strings.ToLower(strings.TrimSpace(modelID))
-	if low == "" {
-		return Rates{}, "", false
-	}
-	// Exact match by precedence.
-	for _, ls := range c.layersWithSource() {
-		if r, ok := ls.layer[low]; ok {
-			return r, ls.source, true
+	for i := len(key); i > minLen; i-- {
+		if r, ok := layer[key[:i]]; ok {
+			return r, true
 		}
 	}
-	// Longest-prefix fallback across the union.
-	var bestKey string
-	var bestRates Rates
-	var bestSource string
-	for _, ls := range c.layersWithSource() {
-		for k, r := range ls.layer {
-			if !strings.HasPrefix(low, k) {
-				continue
-			}
-			if len(k) > len(bestKey) {
-				bestKey = k
-				bestRates = r
-				bestSource = ls.source
-			}
-		}
-	}
-	if bestKey != "" {
-		return bestRates, bestSource, true
-	}
-	return Rates{}, "", false
+	return Rates{}, false
 }
 
 // layerWithSource pairs one layer map with its source-name string.
@@ -381,10 +415,17 @@ type layerWithSource struct {
 }
 
 // layersWithSource is the precedence-ordered pairing consulted by
-// LookupWithSource — highest precedence first. The layer name is
-// carried alongside so callers can attribute the match to the layer
-// that served it.
+// LookupForWithSource — highest precedence first. NewCatalog builds it
+// once; a Catalog assembled field by field (tests) gets it built per
+// call.
 func (c *Catalog) layersWithSource() []layerWithSource {
+	if c.layers != nil {
+		return c.layers
+	}
+	return c.buildLayers()
+}
+
+func (c *Catalog) buildLayers() []layerWithSource {
 	return []layerWithSource{
 		{c.cfgOverride, SourceCfgOverride},
 		{c.projectFile, SourceProjectFile},

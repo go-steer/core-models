@@ -12,12 +12,16 @@
     the whole call by `Rates.At` and every cost method. 57 builtin rows
     carry one.
   - The layered `Catalog` (config override, project file, user manual,
-    user external, builtin, declared), `LookupFor(backend, model)` with
-    backend-qualified rows first, `...WithSource`, `Counts`.
+    user external, builtin, declared), `LookupFor(backend, model)`,
+    `...WithSource`, `Counts`. A lookup tries the exact qualified and bare
+    keys layer by layer before any prefix, so a higher layer's bare row
+    beats a lower layer's qualified one (mast's version did the reverse).
   - **Declared rates**: `DeclaredFromProfiles` turns profiles'
     `models[].rates` into the lowest layer, keyed `<backend>/<model>` and
     labelled `profile-declared`.
-  - `Refresh` with `RefreshOptions.MaxBodyBytes` (default 32 MiB).
+  - `Refresh` with `RefreshOptions.MaxBodyBytes` (default 32 MiB). It
+    stamps each refreshed row's `UpdatedAt`, and returns an error rather
+    than overwrite a `pricing.json` it cannot parse.
   - The generated `builtin.go` and `dev/regen-builtin-pricing`, now also
     emitting `openai` and `xai` rows; mast's 123 rows come out unchanged.
     `.github/workflows/pricing-regen.yml` opens a weekly PR when LiteLLM

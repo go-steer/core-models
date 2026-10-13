@@ -41,7 +41,10 @@ cheaper base price.
 ## The catalog
 
 `NewCatalog(Options{...})` builds the layered view. A lookup takes the first
-exact match, highest layer first, then the longest prefix across all layers:
+exact match, highest layer first. Only when no layer holds the exact id does
+it fall back to a prefix (so `claude-opus-4-7-20991231` finds
+`claude-opus-4-7`), again highest layer first, taking the longest prefix in
+the first layer that has one:
 
 | Layer | Source | Label (`LookupWithSource`) |
 |---|---|---|
@@ -58,8 +61,12 @@ here invents a rate for a model no layer prices.
 ### Rates belong to a (backend, model) pair
 
 The same model can cost different amounts on different backends, and LiteLLM
-prices them separately. `LookupFor(backend, model)` reads the
-`<backend>/<model>` row first and falls back to the bare model id. The backend
+prices them separately. `LookupFor(backend, model)` reads both the
+`<backend>/<model>` row and the bare model id, layer by layer: in each layer
+the qualified row first, then the bare one. Layer precedence comes before
+qualification, so a bare override you write beats a qualified compiled-in row,
+and the prefix fallback runs only after every layer misses on both exact keys.
+The backend
 is core-models' own name, as `profile.Profile.BackendName` and
 `usage.Detail.Backend` report it: `anthropic`, `anthropic-vertex`, `gemini`,
 `vertex`, `vertex-maas`, `openai`, `xai`, or a profile's own.

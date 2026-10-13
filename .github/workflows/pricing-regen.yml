@@ -229,6 +229,9 @@ jobs:
           base: main
           author: 'go-steer-bot[bot] <317684643+go-steer-bot[bot]@users.noreply.github.com>'
           committer: 'go-steer-bot[bot] <317684643+go-steer-bot[bot]@users.noreply.github.com>'
+          # DCO: every commit carries a Signed-off-by (AGENTS.md); the
+          # action signs off as the committer above.
+          signoff: true
           commit-message: |
             chore(pricing): regenerate builtin.go from LiteLLM (${{ steps.meta.outputs.date }})
 

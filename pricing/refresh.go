@@ -108,7 +108,9 @@ type RefreshOutcome struct {
 // place, the caller gets a populated RefreshOutcome.NetworkError,
 // and the surfaced one-liner ("using N-day-old cache") lets the
 // operator know the rates may be stale without breaking the
-// session. Same fall-through for HTTP 5xx / malformed bodies.
+// session. Same fall-through for HTTP 5xx / malformed bodies. An
+// existing pricing.json that cannot be read or parsed is the
+// exception: Refresh returns the error and writes nothing.
 //
 // userHome must resolve to a writable directory (typically
 // ~/.mast or ~/.core-agent). Empty userHome is an error.
@@ -133,11 +135,12 @@ func Refresh(ctx context.Context, userHome string, opts RefreshOptions) (Refresh
 	}
 
 	// Load existing cache to drive both cadence + If-None-Match.
+	// A file that fails to read or parse is an error, not an empty
+	// cache: writing over it would delete the manual section the
+	// operator curates by hand.
 	existing, err := LoadUserFile(userHome)
 	if err != nil {
-		// Corrupt cache shouldn't block refresh — log via the
-		// returned outcome by treating it like a missing cache.
-		existing = &UserFile{Version: SchemaVersion}
+		return RefreshOutcome{}, fmt.Errorf("pricing refresh: %w", err)
 	}
 	now := opts.Now()
 	var existingETag string
@@ -234,6 +237,13 @@ func Refresh(ctx context.Context, userHome string, opts RefreshOptions) (Refresh
 		}, nil
 	}
 
+	// LiteLLM publishes no per-row timestamps, so every row is stamped
+	// with the time it was fetched: the date a pricing view shows is
+	// when the rate was last verified. A 304 leaves the stamps alone.
+	for k, r := range parsed {
+		r.UpdatedAt = now
+		parsed[k] = r
+	}
 	// Write the new external section atomically; the manual section
 	// (if any) round-trips intact.
 	existing.External = &ExternalSource{

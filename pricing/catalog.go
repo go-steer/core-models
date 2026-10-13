@@ -16,6 +16,8 @@
 
 package pricing
 
+import "strings"
+
 // Options bundle the inputs NewCatalog needs to assemble the
 // layered view. All fields are optional — an empty Options yields
 // a catalog with only the compiled-in builtin layer (useful for
@@ -55,14 +57,15 @@ type Options struct {
 // a new Catalog and swap atomically via the consumer's chosen
 // pointer-store mechanism.
 func NewCatalog(opts Options) (*Catalog, error) {
-	// The two generated tables share one layer. Their key spaces cannot
-	// collide — a qualified key always contains "/" and a bare model id
-	// never does — and merging them here means the layered precedence
-	// chain and the prefix fallback work on qualified keys without
-	// knowing they exist.
+	// The two generated tables share one layer, which is how the
+	// precedence chain and the prefix fallback reach qualified keys
+	// without knowing they exist. A bare key may itself contain "/"
+	// (LiteLLM spells some rows "gemini/…" and "xai/…"), so the key
+	// spaces can overlap; the generator keeps such rows out of the bare
+	// table, and the qualified table wins if one ever slips through.
 	c := &Catalog{
 		cfgOverride: lowerKeys(opts.CfgOverride),
-		builtin:     lowercopyRates(builtin, builtinByBackend),
+		builtin:     mergeLowerRates(builtin, builtinByBackend),
 		declared:    lowerKeys(opts.Declared),
 	}
 
@@ -87,14 +90,15 @@ func NewCatalog(opts Options) (*Catalog, error) {
 		}
 	}
 
+	c.layers = c.buildLayers()
 	return c, nil
 }
 
-// lowercopyRates clones already-lowercased Rates maps into one (used
-// for the generated tables, which are lowercase by construction but
-// should never be mutated by lookups or tests). Later maps win on a
-// duplicate key; the generated tables have none.
-func lowercopyRates(srcs ...map[string]Rates) map[string]Rates {
+// mergeLowerRates copies Rates maps into one with every key lowercased
+// and trimmed, as lowerKeys does for the file layers, so lookups need no
+// per-call folding and the generated tables are never mutated. Later
+// maps win on a duplicate key.
+func mergeLowerRates(srcs ...map[string]Rates) map[string]Rates {
 	n := 0
 	for _, s := range srcs {
 		n += len(s)
@@ -105,7 +109,7 @@ func lowercopyRates(srcs ...map[string]Rates) map[string]Rates {
 	out := make(map[string]Rates, n)
 	for _, s := range srcs {
 		for k, v := range s {
-			out[k] = v
+			out[strings.ToLower(strings.TrimSpace(k))] = v
 		}
 	}
 	return out

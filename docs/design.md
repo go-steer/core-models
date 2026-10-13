@@ -621,6 +621,19 @@ Choices the design left open:
   publishes no model with two (checked 2026-10-13); if one appeared, the
   lowest wins. The service-tier variants (`_priority`, `_flex`,
   `_batches`) are not read. 57 builtin rows carry one.
+- **Lookup order.** `LookupFor(backend, model)` runs two phases. Exact: for
+  each layer in precedence order, the `<backend>/<model>` key, then the bare
+  id. Prefix, only if every layer missed: for each layer in the same order,
+  the longest key prefixing the qualified key (longer than `<backend>/`),
+  then the longest prefixing the bare id. So layer precedence beats
+  qualification (an operator's bare override beats a builtin qualified
+  row), exactness beats both (a dated id with its own bare row never bills
+  at a qualified family prefix), and qualified beats bare within a layer.
+  mast's `LookupFor` resolved the qualified key through every layer,
+  prefix included, before trying the bare id; with only the builtin layer
+  wired in mast that changes no price for any id in today's table, but it inverts
+  precedence as soon as an override layer is. The prefix search probes the
+  layer map once per candidate length rather than scanning every key.
 - **The regen's prefix table** is per backend: bare `claude-*` is
   `anthropic`, `vertex_ai/claude-*` is `anthropic-vertex`, `gemini/` is
   `gemini`, bare `gemini-*` is `vertex`, `vertex_ai/<publisher>/<model>-maas`

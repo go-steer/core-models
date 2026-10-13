@@ -335,6 +335,8 @@ func main() {
 	qualified := qualifyByBackend(kept, all)
 	qualified = append(qualified, qualifyProfileBackends(all, now)...)
 	sort.Slice(qualified, func(i, j int) bool { return qualified[i].Name < qualified[j].Name })
+	kept = dedupeNames(kept)
+	qualified = dedupeNames(qualified)
 
 	src, err := render(kept, qualified, now, *source)
 	if err != nil {
@@ -594,7 +596,7 @@ func load(source string) ([]byte, error) {
 			return nil, err
 		}
 		req.Header.Set("Accept", "application/json")
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := loadClient.Do(req)
 		if err != nil {
 			return nil, err
 		}
@@ -602,10 +604,27 @@ func load(source string) ([]byte, error) {
 		if resp.StatusCode/100 != 2 {
 			return nil, fmt.Errorf("http %d fetching %s", resp.StatusCode, source)
 		}
-		return io.ReadAll(resp.Body)
+		// Read one byte past the cap so an oversized body is an error,
+		// not a silently truncated JSON document.
+		body, err := io.ReadAll(io.LimitReader(resp.Body, maxLoadBytes+1))
+		if err != nil {
+			return nil, err
+		}
+		if int64(len(body)) > maxLoadBytes {
+			return nil, fmt.Errorf("%s: body exceeds %d bytes", source, maxLoadBytes)
+		}
+		return body, nil
 	}
 	return os.ReadFile(source) //nolint:gosec // caller-supplied path
 }
+
+// loadClient and maxLoadBytes bound a regen fetch, so a stalled or
+// runaway server fails the weekly job instead of hanging it. The cap
+// matches pricing.DefaultMaxRefreshBodyBytes; LiteLLM's file is a few
+// MB.
+var loadClient = &http.Client{Timeout: 2 * time.Minute}
+
+const maxLoadBytes int64 = 32 << 20
 
 // parse decodes LiteLLM's JSON into a per-model map. Malformed entries
 // are dropped rather than failing the whole run — LiteLLM's schema
@@ -797,7 +816,9 @@ func selectModels(all map[string]liteLLMEntry, today time.Time) ([]generatedEntr
 func ratesOf(key string, e liteLLMEntry) generatedEntry {
 	const million = 1_000_000.0
 	out := generatedEntry{
-		Name:     key,
+		// Catalog keys are lowercase: the catalog folds every lookup
+		// to lowercase, so a mixed-case key would be unreachable.
+		Name:     strings.ToLower(key),
 		Provider: e.LiteLLMProvider,
 		// Round to 6 decimals so binary-repr artifacts from
 		// per-token → per-Mtok multiplication (0.0000001 * 1M
@@ -911,6 +932,21 @@ func isDateSuffix(s string) bool {
 		}
 	}
 	return true
+}
+
+// dedupeNames drops every entry after the first with the same Name from
+// a sorted slice. Lowercasing can fold two LiteLLM keys into one, and a
+// duplicate key would not compile in the generated map literal.
+func dedupeNames(sorted []generatedEntry) []generatedEntry {
+	out := sorted[:0]
+	for i, e := range sorted {
+		if i > 0 && e.Name == sorted[i-1].Name {
+			fmt.Fprintf(os.Stderr, "regen-builtin-pricing: duplicate key %q after lowercasing; keeping the first\n", e.Name)
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
 }
 
 // render produces the final gofmt'd builtin.go source. Header

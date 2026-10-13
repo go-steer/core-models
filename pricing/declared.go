@@ -26,16 +26,19 @@ import "github.com/go-steer/core-models/profile"
 // through extends declares them too.
 //
 // A later profile overrides an earlier one with the same backend and
-// model.
+// model. Within one profile, the first model entry with rates wins when
+// an id repeats, as profile.Profile.RatesFor reads it.
 func DeclaredFromProfiles(ps []profile.Profile) map[string]ModelRates {
 	out := map[string]ModelRates{}
 	for _, p := range ps {
 		backend := p.BackendName()
+		seen := map[string]bool{}
 		for _, m := range p.Models {
-			r, ok := p.RatesFor(m.ID)
-			if !ok {
+			if m.Rates == nil || seen[m.ID] {
 				continue
 			}
+			seen[m.ID] = true
+			r := *m.Rates
 			out[backend+"/"+m.ID] = ModelRates{
 				InputPerMTok:              r.InputPerMTok,
 				CachedInputPerMTok:        r.CachedInputPerMTok,
