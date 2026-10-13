@@ -1,0 +1,123 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Monthly live canary: the conformance scenarios against each first-party
+# provider, so a provider that changes its wire format under a recorded
+# corpus is noticed within a month rather than by a product's user. The
+# corpus replays on every PR, but it only proves the adapter still
+# speaks the dialect as it was on the day it was recorded.
+#
+# Each leg is dev/ci/live-canary.sh; run it locally with the key in the
+# environment. Four calls per leg, a few cents a month in all.
+#
+# Never runs on push or pull requests: the keys are repository secrets
+# and must not be reachable from a PR's code. A leg whose secret is not
+# configured is skipped with a notice rather than failed. Use keys with
+# a low spend limit.
+#
+# A failed leg opens an issue labelled live-canary, or comments on the
+# open one, naming the leg, the failing tests and the run. Only that
+# job can write issues; the legs that hold the keys can't.
+
+name: live-canary
+
+on:
+  schedule:
+    # The 3rd of each month at 09:17 UTC; off the minute-0 herd.
+    - cron: '17 9 3 * *'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  live:
+    name: live (${{ matrix.leg }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: [openai-chat, openai-responses, xai-chat, xai-responses, anthropic, gemini]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Live scenarios
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          CANARY_LOG: ${{ runner.temp }}/live.log
+        run: dev/ci/live-canary.sh '${{ matrix.leg }}'
+      # Only test names and the leg go to the report, never the log
+      # itself: it is go test output, but nothing here needs more.
+      - name: Collect failing tests
+        if: failure()
+        env:
+          LEG: ${{ matrix.leg }}
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/report"
+          {
+            echo "- **${LEG}**"
+            grep -E -- '^\s*--- FAIL: ' "${RUNNER_TEMP}/live.log" | sed -E 's/^\s*--- FAIL: ([^ ]+).*/  - `\1`/' || echo "  - (no test reached; see the run log)"
+          } >"${RUNNER_TEMP}/report/${LEG}.md"
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: canary-${{ matrix.leg }}
+          path: ${{ runner.temp }}/report/
+
+  report:
+    needs: live
+    if: failure()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: canary-*
+          merge-multiple: true
+          path: report
+      - name: Open or comment on the live-canary issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          {
+            echo "The live canary failed on $(date -u +%Y-%m-%d): ${RUN_URL}"
+            echo ""
+            cat report/*.md 2>/dev/null || echo "(no leg report; see the run)"
+            echo ""
+            echo "Reproduce a leg with \`dev/ci/live-canary.sh <leg>\` and its key in the environment."
+          } >body.md
+          gh label create live-canary --color B60205 \
+            --description "The monthly live canary failed" 2>/dev/null || true
+          number="$(gh issue list --state open --label live-canary --limit 1 --json number --jq '.[0].number // empty')"
+          if [[ -n "$number" ]]; then
+            gh issue comment "$number" --body-file body.md
+          else
+            gh issue create --title "Live canary failed" --label live-canary --body-file body.md
+          fi
