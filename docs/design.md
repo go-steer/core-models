@@ -536,6 +536,26 @@ at session start and end for mast, and per `/stats` for core-agent. That answers
 mast OQ-4 by splitting the work: a library embed has no Prometheus, and an
 operator with Prometheus can ignore the sampler.
 
+**As built.** Package `kvmetrics`:
+
+- `New(Options)` or `FromProfile(resolved, model)`; `Snapshot` scrapes
+  once; `Start(ctx, interval)`/`Run.Stop` brackets a window and polls in
+  between when the interval is non-zero, which is what makes the peak
+  utilization real. `Between(readings...)` serves a product that schedules
+  its own scrapes.
+- A profile names its server's vocabulary with a new `metrics` field
+  (`vllm`, `sglang`, `llamacpp`, `none`); the `vllm`, `sglang` and `ollama`
+  built-ins set it and an extending profile inherits it.
+- vLLM is verified live on 0.31 (`prefix_cache_{queries,hits}_total`,
+  `kv_cache_usage_perc`); SGLang and llama.cpp follow their docs.
+  Counters sum across engines, utilization takes the busiest engine, and
+  several models sum unless the caller names one.
+- A counter reset is summed per segment, as Prometheus's `increase()` does,
+  and flagged. Ollama gets `ErrNoMetrics` rather than a sampler that would
+  report an idle cache.
+- The Prometheus text parser is a small one of the library's own, so the
+  core gains no dependency.
+
 ## 9. Pricing (L6)
 
 The mechanics from mast model-support §4.5, merged once:
@@ -587,7 +607,7 @@ model fails at startup (R6) in both products.
 | **L0** | Repo, CI, the `llm`/`usage`/`callctx`/`retry`/`auth`/`profile` skeleton, `adkv1` + `adkv2` shims, `toolwire`, a conformance harness | Both shims pass a round-trip test with a fake `llm.LLM`; mast and core-agent build against the library through `go.work` with no behavior change |
 | **L1** | `openai-chat` and the profiles `openai-compatible`, `vertex-maas`, `vllm`, `sglang`, `ollama` | Conformance corpus green offline. **mast adopts it:** mast's M1 profile wiring resolves `--provider <profile>`, and a vLLM profile runs the triage bundle end to end with tokens per turn and `$—`. A live run against Vertex MaaS (gpt-oss-20b) and a local Ollama |
 | **L2** | `openai-responses`, plus the `openai` and `xai` profiles | Encrypted-reasoning round-trip in the corpus; live tool loop against OpenAI and xAI |
-| **L3** | `kvmetrics` sampler with vLLM, SGLang and llama.cpp parsers; the `cached_tokens: unreliable` flag | mast `/usage` shows a session-scoped prefix-cache hit rate labeled fleet-level, against a real vLLM |
+| **L3** | `kvmetrics` sampler with vLLM, SGLang and llama.cpp parsers; the `cached_tokens: unreliable` flag | mast `/usage` shows a session-scoped prefix-cache hit rate labeled fleet-level, against a real vLLM. *Library side built; mast wiring owed* |
 | **L3'** | **core-agent adopts L1–L3** through `adkv1`: `models.Register` gains profile-backed providers, `config.json` gains a profile section, and `--provider` opens up | core-agent `--provider vllm --model …` drives a tool loop; existing Gemini and Anthropic paths unchanged. *Done 2026-10-10 (core-agent #1294), before L2 and L3, which are still owed* |
 | **L4** | Extract Anthropic (first-party and Vertex), merging in core-agent's caching and sidecar; both products switch | Both products' toolwire and cache-accounting tests green on the library adapter, including mast's #352 measured-turn fixture and core-agent's 1-hour-TTL accounting; core-agent prompt caching available to mast. *Done 2026-10-12: library side 2026-10-10 (§7.3 "As built"); mast #521 and core-agent #1296 switched, with judged-eval and live parity* |
 | **L5** | Extract Gemini and vertexcache, merging in core-agent's retry and cache handling; both products switch | mast's `IncludeServerSideToolInvocations` finding closed ([§12](#12-findings-from-the-inventory)); mast's #325 and core-agent's #902 eviction tests both green on the one verdict; core-agent's retry tests green on the library. *Done 2026-10-12 (mast #521, core-agent #1296)* |

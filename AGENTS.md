@@ -35,13 +35,15 @@ decisions (§2). Read it before proposing a change of shape.
 - **L1** (`openai-chat` dialect for Vertex AI partner models, vLLM, SGLang,
   Ollama and any OpenAI-compatible endpoint): done; mast adopted it (mast
   #510), with judged tool-calling parity and a vLLM deployment end to end.
-- **L3'** (core-agent adopts provider profiles): done (core-agent #1294).
+- **L3'** (core-agent adopts provider profiles, core-agent #1294): done.
+  **L3** (`kvmetrics`, the opt-in KV-cache sampler): library side done;
+  products wiring it in (mast's `/usage`) is owed.
 - **L4** (`dialect/anthropic`) and **L5** (`dialect/gemini`, with
   `vertexcache`): done; mast (#521) and core-agent (#1296) both switched.
 - **L2** (`dialect/openairesp`, the `openai` and `xai` profiles): built, with
   a corpus recorded from vLLM's `/v1/responses`; its live test against OpenAI
   and xAI is owed until there is a key.
-- **Owed:** L3's KV-cache sampler, L6 (one price catalog), and live tests
+- **Owed:** L6 (one price catalog), and live tests
   of Claude on Anthropic's first-party API and of OpenAI and xAI.
 
 [`docs/design.md`](./docs/design.md) §11 lists the phases; the docs site's
@@ -204,6 +206,7 @@ retry/               HTTP-layer retry: Policy.Transport, Record
 auth/                credential resolution: api_key, bearer, google_adc, none
 profile/             provider profiles: schema, built-ins, extends, Resolve
 toolwire/            the shared tool-schema invariant every adapter is held to
+kvmetrics/           opt-in KV-cache sampler: a server's Prometheus endpoint → a fleet-level Window
 dialect/openaichat/  OpenAI Chat Completions (Vertex MaaS, vLLM, SGLang, Ollama, …)
 dialect/openairesp/  OpenAI Responses (OpenAI; opt-in for xAI and vLLM's /v1/responses)
 internal/schemajson/ genai Schema -> JSON Schema, shared by the two OpenAI dialects
@@ -223,7 +226,7 @@ scripts/             verify-internal-links.py (docs site)
 .github/workflows/   thin delegators to dev/ci/presubmits/
 ```
 
-Future packages (`kvmetrics/`, `pricing/`, `conformance/`) are laid out in
+Future packages (`pricing/`, `conformance/`) are laid out in
 [`docs/design.md`](./docs/design.md) §3. Create them in the phase that fills
 them, not before.
 

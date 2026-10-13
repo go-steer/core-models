@@ -1,0 +1,6 @@
+# HAND-WRITTEN: an older SGLang build exposing only the hit-rate gauge
+# and token usage, without the token counters (from SGLang's docs).
+# TYPE sglang_cache_hit_rate gauge
+sglang_cache_hit_rate{model_name="m"} 0.5
+# TYPE sglang_token_usage gauge
+sglang_token_usage{model_name="m"} 0.3

@@ -140,8 +140,12 @@ type Profile struct {
 	// messages, tools, …) cannot be set here.
 	ExtraBody map[string]any `json:"extra_body,omitempty" yaml:"extra_body,omitempty"`
 	// MetricsURL is the server's Prometheus endpoint, for the opt-in
-	// KV-cache sampler (docs/design.md §8).
+	// KV-cache sampler (docs/design.md §8, package kvmetrics).
 	MetricsURL string `json:"metrics_url,omitempty" yaml:"metrics_url,omitempty"`
+	// Metrics names which server's metric names MetricsURL exposes, so
+	// kvmetrics knows how to read it. The vllm, sglang and ollama
+	// built-ins set it, and a profile that extends one inherits it.
+	Metrics MetricsFormat `json:"metrics,omitempty" yaml:"metrics,omitempty"`
 	// Models lists the models the profile serves.
 	Models []Model `json:"models,omitempty" yaml:"models,omitempty"`
 	// Tiers names the model for each tier this profile can fill.
@@ -289,6 +293,31 @@ func (p Profile) CapabilitiesFor(id string) Capabilities {
 	return p.Capabilities
 }
 
+// MetricsFormat names the metric vocabulary a server's Prometheus
+// endpoint uses, for package kvmetrics.
+type MetricsFormat string
+
+const (
+	// MetricsVLLM: vllm:prefix_cache_{queries,hits}_total and
+	// vllm:kv_cache_usage_perc.
+	MetricsVLLM MetricsFormat = "vllm"
+	// MetricsSGLang: sglang:cache_hit_rate, sglang:token_usage, and the
+	// prompt/cached token counters where the build has them.
+	MetricsSGLang MetricsFormat = "sglang"
+	// MetricsLlamaCpp: llama.cpp server's llamacpp:* metrics.
+	MetricsLlamaCpp MetricsFormat = "llamacpp"
+	// MetricsNone: the server exposes no KV-cache statistics (Ollama).
+	MetricsNone MetricsFormat = "none"
+)
+
+func (m MetricsFormat) known() bool {
+	switch m {
+	case "", MetricsVLLM, MetricsSGLang, MetricsLlamaCpp, MetricsNone:
+		return true
+	}
+	return false
+}
+
 // ReasoningFormat says where a server puts a model's reasoning.
 type ReasoningFormat string
 
@@ -394,6 +423,9 @@ func (p Profile) Validate() error {
 	}
 	if p.Usage.CachedTokens != Reported && p.Usage.CachedTokens != Unreliable {
 		bad("usage.cached_tokens %q is not \"unreliable\" or unset", p.Usage.CachedTokens)
+	}
+	if !p.Metrics.known() {
+		bad("metrics %q is not one of vllm, sglang, llamacpp, none", p.Metrics)
 	}
 	if p.ReasoningFormat != ReasoningField && p.ReasoningFormat != ThinkTags {
 		bad("reasoning_format %q is not \"think_tags\" or unset", p.ReasoningFormat)

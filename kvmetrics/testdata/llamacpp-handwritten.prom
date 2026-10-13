@@ -1,0 +1,11 @@
+# HAND-WRITTEN from llama.cpp server's --metrics documentation, not
+# recorded from a live server.
+# HELP llamacpp:prompt_tokens_total Number of prompt tokens processed.
+# TYPE llamacpp:prompt_tokens_total counter
+llamacpp:prompt_tokens_total 4096
+# HELP llamacpp:kv_cache_usage_ratio KV-cache usage. 1 means 100 percent usage.
+# TYPE llamacpp:kv_cache_usage_ratio gauge
+llamacpp:kv_cache_usage_ratio 0.25
+# HELP llamacpp:kv_cache_tokens KV-cache tokens.
+# TYPE llamacpp:kv_cache_tokens gauge
+llamacpp:kv_cache_tokens 2048
