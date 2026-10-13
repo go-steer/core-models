@@ -26,9 +26,10 @@ version: 2
 
 updates:
   - package-ecosystem: gomod
+    # adkv1 is deprecated and gets no further releases (v0.6.6 was its
+    # last), so it is not scanned.
     directories:
       - /
-      - /adkv1
       - /adkv2
     schedule:
       interval: weekly
@@ -52,6 +53,10 @@ updates:
       - dependency-name: google.golang.org/adk/v2
       - dependency-name: github.com/anthropics/anthropic-sdk-go
       - dependency-name: github.com/openai/openai-go/v3
+      # Google credentials (auth.GoogleADC), at the version genai
+      # requires; see the modules page. #37 proposed 0.18.2 -> 0.24.1,
+      # above both products' 0.23.2.
+      - dependency-name: cloud.google.com/go/auth
     groups:
       go-minor-patch:
         applies-to: version-updates
