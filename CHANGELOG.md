@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.10.0 (2026-10-13)
+
 ### Added
 
 - **`kvmetrics`, the opt-in KV-cache sampler (L3).** It reads a self-hosted
