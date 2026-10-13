@@ -28,18 +28,21 @@ OpenAI, the Vertex AI partner models, and self-hosted vLLM, SGLang and Ollama.
 [`docs/design.md`](./docs/design.md) is the design and records the settled
 decisions (§2). Read it before proposing a change of shape.
 
-**Status:** pre-release. L0 is complete:
+**Status:** pre-release (v0.6.x). Both products run on the library:
 
-- the `llm` contract and the `usage` record;
-- `callctx`, `retry`, `auth` and `profile`;
-- the `adkv1` and `adkv2` adapter modules;
-- CI and the docs site.
+- **L0** (contract, usage record, `callctx`/`retry`/`auth`/`profile`, the
+  adapter modules, CI, docs site): done.
+- **L1** (`openai-chat` dialect for Vertex AI partner models, vLLM, SGLang,
+  Ollama and any OpenAI-compatible endpoint): done; mast adopted it (mast
+  #510), with judged tool-calling parity and a vLLM deployment end to end.
+- **L3'** (core-agent adopts provider profiles): done (core-agent #1294).
+- **L4** (`dialect/anthropic`) and **L5** (`dialect/gemini`, with
+  `vertexcache`): done; mast (#521) and core-agent (#1296) both switched.
+- **Owed:** L2 (OpenAI Responses), L3's KV-cache sampler, L6 (one price
+  catalog), and a live test of Claude on Anthropic's first-party API.
 
-L1 is under way. The `openai-chat` dialect, `coremodels.Open` and a
-conformance corpus recorded from Ollama and Vertex AI shipped in v0.1.0,
-and mast runs them behind `--provider <profile>` (mast #510). Still owed
-for L1: a judged live run at tool-calling parity with Claude, and a vLLM
-deployment end to end. core-agent adoption is L3'. [`docs/design.md`](./docs/design.md) §11 lists the phases.
+[`docs/design.md`](./docs/design.md) §11 lists the phases; the docs site's
+roadmap page tracks their status.
 
 ## Reading order
 
@@ -58,13 +61,15 @@ deployment end to end. core-agent adoption is L3'. [`docs/design.md`](./docs/des
 | Repo | Relationship |
 |---|---|
 | [`go-steer/mast`](https://github.com/go-steer/mast) | Consumer, on ADK v2, through `adkv2`. Owns the provider requirements doc |
-| [`go-steer/core-agent`](https://github.com/go-steer/core-agent) | Consumer, on ADK v1, through `adkv1` |
+| [`go-steer/core-agent`](https://github.com/go-steer/core-agent) | Consumer, on ADK v2, through `adkv2` (since core-agent #1291 and #1296). `adkv1` is deprecated |
 
-**Sync discipline.** Once a provider package lives here, fixes to it land
-**here**: a core-models release, then a version bump in each product. Never
-patch a product's vendored or legacy copy and port it later; that is the drift
-this repo exists to end. Until a package is extracted (Anthropic at L4, Gemini
-at L5), fixes to it keep landing in the products. mast's
+**Sync discipline.** Provider fixes land **here**: a core-models release,
+then a version bump in each product. Never patch a product's copy and port it
+later; that is the drift this repo exists to end. The OpenAI-compatible,
+Anthropic and Gemini adapters are all extracted (L1, L4, L5), and both
+products deleted their own copies. What stays in the products is product
+policy (rule #12) and the thin facades that map their config onto profiles.
+mast's
 [`docs/sibling-sync.md`](https://github.com/go-steer/mast/blob/main/docs/sibling-sync.md)
 records the handover.
 
@@ -146,7 +151,9 @@ graph, including tests.
 
 ### 9. The two adapter modules stay in lockstep
 
-`adkv1` is `adkv2` with the import path changed, and nothing else. **Edit
+`adkv1` is deprecated (v0.6.6 was its last release) and will be deleted; until
+then it stays generated from `adkv2`, so the rule still holds. `adkv1` is
+`adkv2` with the import path changed, and nothing else. **Edit
 `adkv2`**, then run `dev/ci/presubmits/shims-lockstep.sh --fix` to regenerate
 `adkv1`. The presubmit fails on any other difference. Write comments in those
 files so they read correctly after the rewrite: say "ADK v2" in prose, never
@@ -195,10 +202,12 @@ auth/                credential resolution: api_key, bearer, google_adc, none
 profile/             provider profiles: schema, built-ins, extends, Resolve
 toolwire/            the shared tool-schema invariant every adapter is held to
 dialect/openaichat/  OpenAI Chat Completions (Vertex MaaS, vLLM, SGLang, Ollama, …)
-dialect/gemini/      Gemini: Developer API and Vertex AI; vertexcache/ for explicit caches
+dialect/anthropic/   Anthropic Messages: first-party and Vertex AI; prompt caching
+dialect/gemini/      Gemini: Developer API, Vertex AI and express mode; vertexcache/ for explicit caches
+deploy/gke-vllm/     kustomize fixtures for a self-hosted vLLM on GKE, plus psc.sh
 testdata/conformance/  recorded exchanges from real servers, replayed in presubmit
-adkv1/  (module)     adapter to google.golang.org/adk v1  — core-agent
-adkv2/  (module)     adapter to google.golang.org/adk/v2  — mast
+adkv1/  (module)     adapter to google.golang.org/adk v1 — DEPRECATED, no users, no further releases
+adkv2/  (module)     adapter to google.golang.org/adk/v2 — mast and core-agent
 docs/design.md       the design; decisions in §2
 docs/site/           Astro + Starlight user docs
 dev/tools/           pinned tools: lint-go, shell-lint, docs-site.sh,
@@ -208,8 +217,8 @@ scripts/             verify-internal-links.py (docs site)
 .github/workflows/   thin delegators to dev/ci/presubmits/
 ```
 
-Future packages (other `dialect/*`,
-`kvmetrics/`, `pricing/`, `toolwire/`, `conformance/`) are laid out in
+Future packages (`dialect/openairesp`, `kvmetrics/`, `pricing/`,
+`conformance/`) are laid out in
 [`docs/design.md`](./docs/design.md) §3. Create them in the phase that fills
 them, not before.
 
@@ -273,12 +282,13 @@ git -c user.email="<human's email>" -c user.name="<human's name>" commit -s -m "
 Each module is tagged separately (Go's nested-module convention), and the core
 always goes first:
 
-1. Tag the core: `vX.Y.Z`.
-2. In `adkv1/go.mod` and `adkv2/go.mod`, bump the `github.com/go-steer/core-models`
-   requirement to `vX.Y.Z`. Keep the `replace` directive. Merge that change.
-3. Tag the adapters: `adkv1/vX.Y.Z` and `adkv2/vX.Y.Z`.
-4. Add a CHANGELOG entry per release.
-5. Open the bump PRs in mast and core-agent.
+1. In `adkv2/go.mod` (and `adkv1/go.mod`, which the lockstep presubmit
+   keeps in step), bump the `github.com/go-steer/core-models` requirement to
+   `vX.Y.Z`, keep the `replace` directive, and move the CHANGELOG's
+   Unreleased entries under a `vX.Y.Z` heading. Merge that change.
+2. Tag the merge commit: the core `vX.Y.Z`, then `adkv2/vX.Y.Z`. `adkv1` is
+   deprecated and no longer tagged.
+3. Open the bump PRs in mast and core-agent, or tell their owners.
 
 Pre-1.0, a minor version may break the API. Say so in the CHANGELOG under
 **API Change**, as mast does.
