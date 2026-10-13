@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.9.0 (2026-10-13)
+
 ### Added
 
 - **The `openai-responses` dialect (L2), package `dialect/openairesp`:**
