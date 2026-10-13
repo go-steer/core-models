@@ -24,6 +24,7 @@ import (
 	"iter"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -247,7 +248,29 @@ type APIError struct {
 	err *anthropic.Error
 }
 
-func (e *APIError) Error() string { return "anthropic: " + e.err.Error() }
+// Error is the SDK's message with the URL corrected. The SDK names the
+// request as it built it; on Vertex AI the middleware then rewrote it
+// (…/v1/messages → …/models/<id>:rawPredict), and a message naming the
+// path that was never called sends anyone reading logs to the wrong
+// endpoint (#35). The response carries the request actually sent.
+func (e *APIError) Error() string {
+	msg := e.err.Error()
+	if built, sent := e.err.Request, sentRequest(e.err.Response); built != nil && sent != nil && built.URL != nil && sent.URL != nil {
+		if b, s := built.URL.String(), sent.URL.String(); b != s {
+			msg = strings.Replace(msg, strconv.Quote(b), strconv.Quote(s), 1)
+		}
+	}
+	return "anthropic: " + msg
+}
+
+// sentRequest is the request a response answered, as the transport sent
+// it.
+func sentRequest(resp *http.Response) *http.Request {
+	if resp == nil {
+		return nil
+	}
+	return resp.Request
+}
 func (e *APIError) Unwrap() error { return e.err }
 
 // HTTPStatus is the response's status, or for a mid-stream error the

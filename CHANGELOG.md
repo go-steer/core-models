@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Fixed
+
+- **A Claude-on-Vertex error names the endpoint actually called** (#35).
+  The SDK's message showed the request as it built it (`…/v1/messages`),
+  before the Vertex middleware rewrote it to
+  `…/models/<id>:streamRawPredict`. `APIError.Error()` now substitutes the
+  URL the response answered.
+
 ## v0.7.0 (2026-10-13)
 
 ### Added
