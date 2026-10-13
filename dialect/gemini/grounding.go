@@ -31,10 +31,10 @@ const AuthorGoogleSearch = "gemini/google_search"
 // can follow, is skipped. Nil when there is no evidence, the common
 // case.
 //
-// This is the ADK-free half of both products' GroundingProjection.
-// The other half wraps an ADK session.Service and appends one event per
-// line under AuthorGoogleSearch; it lives with the product (or a shim),
-// because session events are ADK's.
+// This is the ADK-free half of the grounding projection. The other
+// half, adkv2.GroundingProjection, wraps an ADK session.Service and
+// appends one event per line under AuthorGoogleSearch; it lives in the
+// adapter module because session events are ADK's.
 func GroundingEvidence(gm *genai.GroundingMetadata) []string {
 	if gm == nil || (len(gm.WebSearchQueries) == 0 && len(gm.GroundingChunks) == 0) {
 		return nil

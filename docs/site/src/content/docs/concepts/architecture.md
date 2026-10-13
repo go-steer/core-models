@@ -24,8 +24,8 @@ serve both.
 | Module | Depends on | Used by |
 |---|---|---|
 | `github.com/go-steer/core-models` | genai and the vendor SDKs, **never ADK** | everything below |
-| `github.com/go-steer/core-models/adkv1` | the core, `google.golang.org/adk` v1 | core-agent |
-| `github.com/go-steer/core-models/adkv2` | the core, `google.golang.org/adk/v2` | mast |
+| `github.com/go-steer/core-models/adkv1` | the core, `google.golang.org/adk` v1 | nobody: **deprecated** since v0.6.6, when core-agent moved to ADK v2 |
+| `github.com/go-steer/core-models/adkv2` | the core, `google.golang.org/adk/v2` | mast and core-agent. `Wrap` adapts an `llm.LLM` to ADK, and `GroundingProjection` turns Gemini's Google Search grounding into session events |
 
 The two adapter modules convert by copying fields. Each has two functions:
 - `Wrap` turns a core-models model into an ADK `model.LLM`.

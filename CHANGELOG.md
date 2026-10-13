@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## v0.7.0 (2026-10-13)
+
+### Added
+
+- **`adkv2.GroundingProjection`** wraps an ADK `session.Service` so an
+  event carrying Gemini Google Search grounding is followed by synthetic
+  events: one per query and one per web source, authored
+  `gemini.AuthorGoogleSearch`, with no role, so they stay out of the
+  model's history. It is built on `gemini.GroundingEvidence` and passes
+  the context to `session.NewEvent`, so ADK's replay providers name the
+  events. Both products carried their own copy; this replaces them.
+
 ## v0.6.6 (2026-10-12)
 
 ### Deprecated
