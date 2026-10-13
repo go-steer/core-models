@@ -8,8 +8,8 @@ sidebar:
 core-models has **three adapters: OpenAI Chat Completions, Anthropic
 Messages and Gemini**. Chat Completions has been run against Ollama, vLLM
 and Vertex AI's partner-model endpoint, and Messages against Claude on
-Vertex AI. mast and core-agent still reach Gemini and Claude through their
-own code until each switches to these adapters.
+Vertex AI. mast and core-agent both reach Gemini and Claude through these
+adapters.
 
 ## Three wire formats, not one adapter per vendor
 
@@ -18,9 +18,9 @@ Most models are reachable through one of three API shapes:
 | Wire format | Reaches | Status |
 |---|---|---|
 | OpenAI Chat Completions | Vertex AI partner models, xAI, vLLM, SGLang, Ollama, llama.cpp, NVIDIA NIM, Groq, Together, Fireworks, DeepSeek, Mistral, any LiteLLM or OpenRouter endpoint | **built** (`dialect/openaichat`) |
-| OpenAI Responses | OpenAI, xAI | planned |
-| Anthropic Messages | Claude on Anthropic and Vertex AI; Bedrock later | **here** (`dialect/anthropic`), not yet adopted by the products |
-| genai | Gemini on the Developer API and Vertex AI | **here** (`dialect/gemini`), not yet adopted by the products |
+| OpenAI Responses | OpenAI, xAI (opt-in), and vLLM's `/v1/responses` | **built** (`dialect/openairesp`); not yet live-tested against OpenAI or xAI |
+| Anthropic Messages | Claude on Anthropic and Vertex AI; Bedrock later | **built** (`dialect/anthropic`); mast and core-agent run on it |
+| genai | Gemini on the Developer API and Vertex AI | **built** (`dialect/gemini`); mast and core-agent run on it |
 
 Chat Completions comes first because that one adapter reaches the most
 models, both managed and self-hosted.

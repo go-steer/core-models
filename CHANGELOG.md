@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+### Added
+
+- **The `openai-responses` dialect (L2), package `dialect/openairesp`:**
+  OpenAI's Responses API, written on net/http and its own wire types like
+  `openai-chat`.
+  - **Stateless:** `store: false`, with a reasoning model's encrypted
+    reasoning requested and carried forward through
+    `genai.Part.ThoughtSignature`, so a tool loop keeps its reasoning.
+  - **Mapping:** the system prompt goes in `instructions`; function calls
+    and outputs are matched by `call_id`; tools use the flat shape.
+    `ThinkingLevel` maps to `reasoning.effort`, and `IncludeThoughts` asks
+    for summaries. Stop sequences, seed and penalties, which the API lacks,
+    are refused.
+  - **Streaming:** the final response is decoded from `response.completed`,
+    as a non-streamed one is.
+  - **Usage:** cached and reasoning tokens, plus vLLM's `cache_write_tokens`.
+  - **New built-in profiles:** `openai` (Responses, `OPENAI_API_KEY`) and
+    `xai` (Chat Completions, `XAI_API_KEY`). Any profile can opt into
+    Responses with `dialect: openai-responses`.
+  - **Tests:** a conformance corpus recorded from vLLM v0.31's
+    `/v1/responses` with Gemma 4.
+  - **Not yet live-tested against OpenAI or xAI** (no key). The encrypted
+    reasoning round trip is tested offline against OpenAI's documented
+    shape.
+- **`internal/schemajson`:** the genai-to-JSON-Schema conversion, now
+  shared by both OpenAI dialects.
+- **The conformance corpus's `meta.json` takes a `dialect`,** for a server
+  recorded on a dialect its built-in profile doesn't default to.
+
 ## v0.8.0 (2026-10-13)
 
 ### Added

@@ -12,10 +12,18 @@ One LLM provider layer for Go agents built on Google's
   whichever model answered;
 - thin adapter modules for ADK v1 and ADK v2.
 
-**Status: pre-release.** The provider contract, the usage record and the two
-ADK adapter modules exist. The first new provider, OpenAI-compatible Chat
-Completions, is next. See the
-[roadmap](https://go-steer.github.io/core-models/roadmap/).
+**Status: pre-release (v0.x), in use.** mast and core-agent both run on it.
+Four wire formats ("dialects") are built:
+
+| Dialect | Package | Reaches |
+|---|---|---|
+| `openai-chat` | `dialect/openaichat` | Vertex AI partner models, xAI, vLLM, SGLang, Ollama and any OpenAI-compatible endpoint |
+| `openai-responses` | `dialect/openairesp` | OpenAI, and any server that serves `/v1/responses` (xAI, vLLM) |
+| `anthropic` | `dialect/anthropic` | Claude on Anthropic's API and on Vertex AI |
+| `gemini` | `dialect/gemini` | Gemini on the Developer API and Vertex AI |
+
+See the [roadmap](https://go-steer.github.io/core-models/roadmap/) for what
+is still owed.
 
 - **Docs:** <https://go-steer.github.io/core-models/>
 - **Design:** [`docs/design.md`](./docs/design.md)
@@ -26,7 +34,7 @@ Completions, is next. See the
 
 | Module | For |
 |---|---|
-| `github.com/go-steer/core-models` | The contract (`llm`), the usage record (`usage`), and later the providers. Never imports ADK |
+| `github.com/go-steer/core-models` | The contract (`llm`), the usage record (`usage`), profiles and the dialects above. Never imports ADK |
 | `github.com/go-steer/core-models/adkv1` | Projects on `google.golang.org/adk` v1. **Deprecated** since v0.6.6, its last release; move to ADK v2 and `adkv2` |
 | `github.com/go-steer/core-models/adkv2` | Projects on `google.golang.org/adk/v2` |
 

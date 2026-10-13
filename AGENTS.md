@@ -38,8 +38,11 @@ decisions (§2). Read it before proposing a change of shape.
 - **L3'** (core-agent adopts provider profiles): done (core-agent #1294).
 - **L4** (`dialect/anthropic`) and **L5** (`dialect/gemini`, with
   `vertexcache`): done; mast (#521) and core-agent (#1296) both switched.
-- **Owed:** L2 (OpenAI Responses), L3's KV-cache sampler, L6 (one price
-  catalog), and a live test of Claude on Anthropic's first-party API.
+- **L2** (`dialect/openairesp`, the `openai` and `xai` profiles): built, with
+  a corpus recorded from vLLM's `/v1/responses`; its live test against OpenAI
+  and xAI is owed until there is a key.
+- **Owed:** L3's KV-cache sampler, L6 (one price catalog), and live tests
+  of Claude on Anthropic's first-party API and of OpenAI and xAI.
 
 [`docs/design.md`](./docs/design.md) §11 lists the phases; the docs site's
 roadmap page tracks their status.
@@ -202,6 +205,8 @@ auth/                credential resolution: api_key, bearer, google_adc, none
 profile/             provider profiles: schema, built-ins, extends, Resolve
 toolwire/            the shared tool-schema invariant every adapter is held to
 dialect/openaichat/  OpenAI Chat Completions (Vertex MaaS, vLLM, SGLang, Ollama, …)
+dialect/openairesp/  OpenAI Responses (OpenAI; opt-in for xAI and vLLM's /v1/responses)
+internal/schemajson/ genai Schema -> JSON Schema, shared by the two OpenAI dialects
 dialect/anthropic/   Anthropic Messages: first-party and Vertex AI; prompt caching
 dialect/gemini/      Gemini: Developer API, Vertex AI and express mode; vertexcache/ for explicit caches
 deploy/gke-vllm/     kustomize fixtures for a self-hosted vLLM on GKE, plus psc.sh
@@ -217,8 +222,7 @@ scripts/             verify-internal-links.py (docs site)
 .github/workflows/   thin delegators to dev/ci/presubmits/
 ```
 
-Future packages (`dialect/openairesp`, `kvmetrics/`, `pricing/`,
-`conformance/`) are laid out in
+Future packages (`kvmetrics/`, `pricing/`, `conformance/`) are laid out in
 [`docs/design.md`](./docs/design.md) §3. Create them in the phase that fills
 them, not before.
 

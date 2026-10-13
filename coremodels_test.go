@@ -107,8 +107,7 @@ func TestOpenRefusesBeforeAnyRequest(t *testing.T) {
 	}{
 		"missing project":  {profile.Profile{Name: "m", Extends: "vertex-maas"}, nil, "GOOGLE_CLOUD_PROJECT is not set"},
 		"template, no url": {profile.Profile{Name: "v", Extends: "vllm"}, nil, "base_url is required"},
-		"unbuilt dialect": {profile.Profile{Name: "resp", Dialect: profile.OpenAIResponses, BaseURL: "http://127.0.0.1:1/v1",
-			Auth: auth.Config{Kind: auth.None}, OpenModels: new(true)}, nil, "not built yet"},
+		"no OpenAI key":    {profile.Profile{Name: "o", Extends: "openai"}, nil, "OPENAI_API_KEY is not set"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := coremodels.Open(context.Background(), tc.p, opts(tc.env))
@@ -412,5 +411,17 @@ func TestOpenKeepsTheAuthSentinel(t *testing.T) {
 		if !errors.Is(err, auth.ErrNoADC) {
 			t.Errorf("%s: Open = %v, want errors.Is ErrNoADC", name, err)
 		}
+	}
+}
+
+// TestOpenResponsesRefusesBuiltins: the openai-responses dialect sends
+// function tools only, so asking for a server-side built-in is an error
+// at Open, not a silently missing tool.
+func TestOpenResponsesRefusesBuiltins(t *testing.T) {
+	p := profile.Profile{Name: "resp", Extends: "vllm", Dialect: profile.OpenAIResponses, BaseURL: "http://127.0.0.1:1/v1"}
+	o := opts(nil)
+	o.BuiltinTools = []string{"web_search"}
+	if _, err := coremodels.Open(context.Background(), p, o); err == nil || !strings.Contains(err.Error(), "function tools only") {
+		t.Errorf("Open = %v, want built-ins refused", err)
 	}
 }
