@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.11.0 (2026-10-13)
+
 ### Added
 
 - **`pricing`, the price catalog both products share (L6, library half).**
