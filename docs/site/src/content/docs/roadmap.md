@@ -13,7 +13,7 @@ Each phase names what it delivers and how it is judged done.
 | **L3** | KV-cache statistics from self-hosted servers; core-agent adopts L1–L3 | **library side done**: core-agent adopted provider profiles (core-agent #1294), and [`kvmetrics`](/concepts/kv-cache-metrics/) samples vLLM (verified live on 0.31), SGLang and llama.cpp metrics endpoints. Still owed for the exit criterion: mast's `/usage` showing a session's fleet-level hit rate from it |
 | **L4** | Anthropic adapter moves here, with the best of both products' versions | **done**: `dialect/anthropic` and the `anthropic` and `anthropic-vertex` profiles (v0.6.0); mast (mast #521) and core-agent (core-agent #1296) both run on it, with judged-eval and live parity against their previous adapters. Claude on the first-party API is offline-tested only |
 | **L5** | Gemini adapter and Vertex context caching move here | **done**: `dialect/gemini`, `dialect/gemini/vertexcache` and the `gemini`, `vertex` and `vertex-express` profiles (v0.6.0–v0.6.3); mast and core-agent both run on it, with judged-eval and live parity, including web search and the Vertex context cache |
-| **L6** | One price catalog for both products | planned |
+| **L6** | One price catalog for both products | **in progress**: the `pricing` package (layered catalog, (backend, model) rates, long-context tiers, declared rates, the LiteLLM regen and refresh) is built, and mast's and core-agent's pricing tests both pass against it. Still owed: both products switching to it. See [pricing](/concepts/pricing/) |
 | **Later** | Claude on Bedrock, Azure OpenAI, more built-in profiles | planned |
 
 The [design document](https://github.com/go-steer/core-models/blob/main/docs/design.md)

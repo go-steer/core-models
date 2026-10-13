@@ -225,7 +225,8 @@ tiers: {mid: Qwen/Qwen3-Coder-Next}
   values may be `${VAR}` or `${VAR:-default}`.
 - Capabilities are tri-state (`*bool`), so an operator can override a
   template's `true` with `false`.
-- `rates:` waits for the price catalog (L6).
+- Per-model `rates:` (since v0.5.0) feed the price catalog's lowest layer through
+  `pricing.DeclaredFromProfiles` (L6, [§9](#9-pricing-l6)).
 
 `Open` (profile to `Provider`) lands with the first dialect in L1. Until
 then, `Resolve` is the construction-time check.
@@ -583,6 +584,69 @@ deleted in mast rather than moved.
 override, or are explicitly unpriced. A `max_cost_usd` ceiling on an unpriced
 model fails at startup (R6) in both products.
 
+**As built (L6 library half, 2026-10-13).** Package `pricing/`, merged from
+mast's `internal/pricing` (go-steer/mast@020004fe) and core-agent's
+`pkg/pricing` (go-steer/core-agent@57a1500f), which had drifted apart
+from one origin. Every divergence, and which side won:
+
+| Divergence | mast | core-agent | Here |
+|---|---|---|---|
+| Backend keying | `builtinByBackend`, `LookupFor`, `LookupForWithSource`, merged into the builtin layer | bare ids only | **mast's** |
+| Declared rates | priced by compose's fallback when the catalog misses | `Options.Declared`, lowest layer, source `profile-declared` | **core-agent's**, plus `DeclaredFromProfiles` |
+| Refresh body cap | 8 MiB, a package variable | 32 MiB, a constant | **32 MiB**, now `RefreshOptions.MaxBodyBytes` |
+| Profile backends in the regen | vertex-maas | none | **mast's**, plus `openai` and `xai` (L2's profiles) |
+| `--check --report` drift itemization | yes | `--check` only | **mast's** |
+| 1-hour write rate, `CostUSDWithCacheTTLs` | yes (ported from core-agent) | yes | identical; core-agent's comment kept |
+| Introductory-rates test | yes | no | **kept**: it asserts facts about the table, which moved here |
+| Tier-default and model-tier coverage tests | `taskclass`, `modeltier` | the same | **stay in the products**: tier defaults are product policy (AGENTS.md rule 12); each checks `pricing.Builtin()` after adopting |
+
+Choices the design left open:
+
+- **Declared rates are the lowest layer**, not part of the operator-override
+  layer the paragraph above names. Both products already behaved that way
+  (mast's fallback, core-agent's layer), and it keeps a catalog's published
+  price ahead of a profile's estimate for any model a catalog prices. They
+  are keyed `<backend>/<model>` by `DeclaredFromProfiles`, so `LookupFor`
+  scopes a declaration to the profile that made it. The source string is
+  core-agent's existing `profile-declared`, not "operator declared", so its
+  operators' greps keep working.
+- **`LongContext` carries absolute rates, not multipliers.** LiteLLM
+  publishes `<bucket>_above_<N>k_tokens` per bucket, and the buckets don't
+  move together: gemini-2.5-pro's cache reads double above 200K while its
+  output goes 1.5x, which no `{InputMult, OutputMult}` pair can say.
+  `Rates.At(promptTokens)` returns the rates for a call, and every `Cost*`
+  method applies it on the whole prompt (uncached + reads + writes), output
+  included. A bucket the long row leaves unpublished scales with the input
+  increase; output falls back to base. One threshold per model: LiteLLM
+  publishes no model with two (checked 2026-10-13); if one appeared, the
+  lowest wins. The service-tier variants (`_priority`, `_flex`,
+  `_batches`) are not read. 57 builtin rows carry one.
+- **Lookup order.** `LookupFor(backend, model)` runs two phases. Exact: for
+  each layer in precedence order, the `<backend>/<model>` key, then the bare
+  id. Prefix, only if every layer missed: for each layer in the same order,
+  the longest key prefixing the qualified key (longer than `<backend>/`),
+  then the longest prefixing the bare id. So layer precedence beats
+  qualification (an operator's bare override beats a builtin qualified
+  row), exactness beats both (a dated id with its own bare row never bills
+  at a qualified family prefix), and qualified beats bare within a layer.
+  mast's `LookupFor` resolved the qualified key through every layer,
+  prefix included, before trying the bare id; with only the builtin layer
+  wired in mast that changes no price for any id in today's table, but it inverts
+  precedence as soon as an override layer is. The prefix search probes the
+  layer map once per candidate length rather than scanning every key.
+- **The regen's prefix table** is per backend: bare `claude-*` is
+  `anthropic`, `vertex_ai/claude-*` is `anthropic-vertex`, `gemini/` is
+  `gemini`, bare `gemini-*` is `vertex`, `vertex_ai/<publisher>/<model>-maas`
+  is `vertex-maas`, unprefixed `litellm_provider: openai` is `openai`, and
+  `xai/` is `xai`. `azure/` has no built-in profile yet and isn't emitted.
+- **The generated table is diffable against mast's.** All 123 of mast's
+  rows (regenerated 2026-10-12) come out with identical rates; the new rows
+  are 75 `openai` and 26 `xai`.
+- **Product policy stays out:** file locations, whether and when Refresh
+  runs, and how a config file feeds `CfgOverride` are the products'.
+  Nothing invents a default rate: a miss is a miss, and a product renders
+  it "$—".
+
 ## 10. Testing
 
 - **The conformance corpus is the gate** (R2/R8). Each dialect has recorded HTTP
@@ -617,7 +681,7 @@ model fails at startup (R6) in both products.
 | **L3'** | **core-agent adopts L1–L3** through `adkv1`: `models.Register` gains profile-backed providers, `config.json` gains a profile section, and `--provider` opens up | core-agent `--provider vllm --model …` drives a tool loop; existing Gemini and Anthropic paths unchanged. *Done 2026-10-10 (core-agent #1294), before L2 and L3, which are still owed* |
 | **L4** | Extract Anthropic (first-party and Vertex), merging in core-agent's caching and sidecar; both products switch | Both products' toolwire and cache-accounting tests green on the library adapter, including mast's #352 measured-turn fixture and core-agent's 1-hour-TTL accounting; core-agent prompt caching available to mast. *Done 2026-10-12: library side 2026-10-10 (§7.3 "As built"); mast #521 and core-agent #1296 switched, with judged-eval and live parity* |
 | **L5** | Extract Gemini and vertexcache, merging in core-agent's retry and cache handling; both products switch | mast's `IncludeServerSideToolInvocations` finding closed ([§12](#12-findings-from-the-inventory)); mast's #325 and core-agent's #902 eviction tests both green on the one verdict; core-agent's retry tests green on the library. *Done 2026-10-12 (mast #521, core-agent #1296)* |
-| **L6** | Pricing merge ([§9](#9-pricing-l6)) | One catalog; mast's backend-shape tests and core-agent's 1-hour-TTL tests both pass against it |
+| **L6** | Pricing merge ([§9](#9-pricing-l6)) | One catalog; mast's backend-shape tests and core-agent's 1-hour-TTL tests both pass against it. *Library half done 2026-10-13 (both test sets pass in `pricing/`); product adoption owed* |
 | **P1** | Bedrock Claude, Azure OpenAI, long-tail built-in profiles, NIM | Each has a tier map, catalog rows and a live smoke, or ships as an unvalidated template |
 
 **L5 status (2026-10-10).** The library half is done: package `dialect/gemini`
