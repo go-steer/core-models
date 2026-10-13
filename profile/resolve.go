@@ -130,9 +130,12 @@ var builtins = map[string]Profile{
 		derive: anthropicVertexHost,
 	},
 	// OpenAI first-party, on the Responses API (docs/design.md §7.2).
+	// Backends are named, as for gemini below, so a derived profile
+	// prices under the vendor whatever an operator calls it.
 	"openai": {
 		Name:       "openai",
 		Dialect:    OpenAIResponses,
+		Backend:    "openai",
 		BaseURL:    "https://api.openai.com/v1",
 		Auth:       auth.Config{Kind: auth.APIKey, Env: "OPENAI_API_KEY"},
 		OpenModels: yes(),
@@ -146,6 +149,7 @@ var builtins = map[string]Profile{
 	"xai": {
 		Name:       "xai",
 		Dialect:    OpenAIChat,
+		Backend:    "xai",
 		BaseURL:    "https://api.x.ai/v1",
 		Auth:       auth.Config{Kind: auth.APIKey, Env: "XAI_API_KEY"},
 		OpenModels: yes(),

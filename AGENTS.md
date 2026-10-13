@@ -207,6 +207,7 @@ toolwire/            the shared tool-schema invariant every adapter is held to
 dialect/openaichat/  OpenAI Chat Completions (Vertex MaaS, vLLM, SGLang, Ollama, …)
 dialect/openairesp/  OpenAI Responses (OpenAI; opt-in for xAI and vLLM's /v1/responses)
 internal/schemajson/ genai Schema -> JSON Schema, shared by the two OpenAI dialects
+internal/openaishared/ usage mapping, error parsing and tool-call ids shared by the two OpenAI dialects
 dialect/anthropic/   Anthropic Messages: first-party and Vertex AI; prompt caching
 dialect/gemini/      Gemini: Developer API, Vertex AI and express mode; vertexcache/ for explicit caches
 deploy/gke-vllm/     kustomize fixtures for a self-hosted vLLM on GKE, plus psc.sh

@@ -84,6 +84,14 @@ type namedToolChoice struct {
 	Name string `json:"name"`
 }
 
+// allowedTools restricts the model to a subset of the request's tools,
+// unforced (mode auto) or forced (mode required).
+type allowedTools struct {
+	Type  string            `json:"type"` // allowed_tools
+	Mode  string            `json:"mode"`
+	Tools []namedToolChoice `json:"tools"`
+}
+
 type reasoningOpts struct {
 	Effort  string `json:"effort,omitempty"`
 	Summary string `json:"summary,omitempty"`
@@ -176,10 +184,4 @@ type errorBody struct {
 	Message string          `json:"message"`
 	Type    string          `json:"type"`
 	Code    json.RawMessage `json:"code"`
-}
-
-type errorEnvelope struct {
-	Error   *errorBody `json:"error"`
-	Message string     `json:"message"`
-	Detail  string     `json:"detail"`
 }

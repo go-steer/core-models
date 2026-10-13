@@ -15,9 +15,7 @@
 package openaichat
 
 import (
-	"crypto/rand"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,6 +24,7 @@ import (
 
 	"google.golang.org/genai"
 
+	"github.com/go-steer/core-models/internal/openaishared"
 	"github.com/go-steer/core-models/llm"
 )
 
@@ -197,7 +196,7 @@ func (m *model) convertContents(contents []*genai.Content) ([]message, error) {
 	return out, nil
 }
 
-func (m *model) assistantMessage(c *genai.Content, ids *idAssigner) (message, bool, error) {
+func (m *model) assistantMessage(c *genai.Content, ids *openaishared.IDAssigner) (message, bool, error) {
 	var text, thought strings.Builder
 	msg := message{Role: "assistant"}
 	for _, p := range c.Parts {
@@ -209,7 +208,7 @@ func (m *model) assistantMessage(c *genai.Content, ids *idAssigner) (message, bo
 				return message{}, false, fmt.Errorf("tool call %q: arguments: %w", p.FunctionCall.Name, err)
 			}
 			msg.ToolCalls = append(msg.ToolCalls, toolCall{
-				ID:       ids.call(p.FunctionCall.ID, p.FunctionCall.Name),
+				ID:       ids.Call(p.FunctionCall.ID, p.FunctionCall.Name),
 				Type:     "function",
 				Function: functionCall{Name: p.FunctionCall.Name, Arguments: string(args)},
 			})
@@ -238,7 +237,7 @@ func (m *model) assistantMessage(c *genai.Content, ids *idAssigner) (message, bo
 	return msg, true, nil
 }
 
-func userMessages(c *genai.Content, ids *idAssigner) ([]message, error) {
+func userMessages(c *genai.Content, ids *openaishared.IDAssigner) ([]message, error) {
 	var tools []message
 	var parts []contentPart
 	for _, p := range c.Parts {
@@ -252,7 +251,7 @@ func userMessages(c *genai.Content, ids *idAssigner) ([]message, error) {
 			tools = append(tools, message{
 				Role:       "tool",
 				Content:    string(body),
-				ToolCallID: ids.response(p.FunctionResponse.ID, p.FunctionResponse.Name),
+				ToolCallID: ids.Response(p.FunctionResponse.ID, p.FunctionResponse.Name),
 			})
 		case p.InlineData != nil:
 			if !strings.HasPrefix(p.InlineData.MIMEType, "image/") {
@@ -297,67 +296,12 @@ func unsupported(p *genai.Part) error {
 	return nil
 }
 
-// idAssigner gives every tool call an id and every tool result the id
-// of the call it answers. History written by another provider (Gemini
-// does not set ids) has none; such calls get a generated id and their
-// results are matched to them by name, in order.
-type idAssigner struct {
-	pending map[string][]string
-}
+func newIDAssigner() *openaishared.IDAssigner { return openaishared.NewIDAssigner() }
 
-func newIDAssigner() *idAssigner { return &idAssigner{pending: map[string][]string{}} }
+func textOf(c *genai.Content) string { return openaishared.TextOf(c) }
 
-func (a *idAssigner) call(id, name string) string {
-	if id != "" {
-		return id
-	}
-	id = newCallID()
-	a.pending[name] = append(a.pending[name], id)
-	return id
-}
-
-func (a *idAssigner) response(id, name string) string {
-	if id != "" {
-		return id
-	}
-	if q := a.pending[name]; len(q) > 0 {
-		a.pending[name] = q[1:]
-		return q[0]
-	}
-	return newCallID()
-}
-
-func newCallID() string {
-	var b [12]byte
-	_, _ = rand.Read(b[:])
-	return "call_" + hex.EncodeToString(b[:])
-}
-
-func textOf(c *genai.Content) string {
-	if c == nil {
-		return ""
-	}
-	var parts []string
-	for _, p := range c.Parts {
-		if p != nil && p.Text != "" && !p.Thought {
-			parts = append(parts, p.Text)
-		}
-	}
-	return strings.Join(parts, "\n\n")
-}
-
-func nonNilMap(m map[string]any) map[string]any {
-	if m == nil {
-		return map[string]any{}
-	}
-	return m
-}
+func nonNilMap(m map[string]any) map[string]any { return openaishared.NonNilMap(m) }
 
 func ptr[T any](v T) *T { return &v }
 
-func f64(v *float32) *float64 {
-	if v == nil {
-		return nil
-	}
-	return ptr(float64(*v))
-}
+func f64(v *float32) *float64 { return openaishared.F64(v) }

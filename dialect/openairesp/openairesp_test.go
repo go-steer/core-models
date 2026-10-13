@@ -97,7 +97,8 @@ func client(t *testing.T, s *server, mod func(*openairesp.Options)) *openairesp.
 	t.Helper()
 	p := retry.Default()
 	p.Sleep = func(ctx context.Context, _ time.Duration) error { return ctx.Err() }
-	opts := openairesp.Options{BaseURL: s.srv.URL + "/v1", Backend: "openai", Retry: &p}
+	// OpenAI's built-in replays reasoning (capabilities.reasoning_echo).
+	opts := openairesp.Options{BaseURL: s.srv.URL + "/v1", Backend: "openai", Retry: &p, ReasoningEcho: true}
 	if mod != nil {
 		mod(&opts)
 	}
@@ -309,7 +310,13 @@ func TestToolChoice(t *testing.T) {
 		"none":           {genai.FunctionCallingConfigModeNone, nil, false, "none", false},
 		"required":       {genai.FunctionCallingConfigModeAny, nil, false, "required", false},
 		"named":          {genai.FunctionCallingConfigModeAny, []string{"b"}, false, map[string]any{"type": "function", "name": "b"}, false},
-		"forced refused": {genai.FunctionCallingConfigModeAny, []string{"b"}, true, "auto", true},
+		"forced refused": {genai.FunctionCallingConfigModeAny, nil, true, "auto", true},
+		"forced refused, allow-list kept": {genai.FunctionCallingConfigModeAny, []string{"b"}, true,
+			map[string]any{"type": "allowed_tools", "mode": "auto", "tools": []any{map[string]any{"type": "function", "name": "b"}}}, true},
+		"required among several": {genai.FunctionCallingConfigModeAny, []string{"a", "b"}, false,
+			map[string]any{"type": "allowed_tools", "mode": "required", "tools": []any{map[string]any{"type": "function", "name": "a"}, map[string]any{"type": "function", "name": "b"}}}, false},
+		"auto restricted": {genai.FunctionCallingConfigModeAuto, []string{"a"}, false,
+			map[string]any{"type": "allowed_tools", "mode": "auto", "tools": []any{map[string]any{"type": "function", "name": "a"}}}, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			s := newServer(t, reply{body: textReply})
@@ -349,8 +356,11 @@ func TestReasoningEffort(t *testing.T) {
 		tc   *genai.ThinkingConfig
 		want any
 	}{
-		"level":           {&genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelHigh}, map[string]any{"effort": "high"}},
-		"zero budget":     {&genai.ThinkingConfig{ThinkingBudget: &zero}, map[string]any{"effort": "minimal"}},
+		"level": {&genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelHigh}, map[string]any{"effort": "high"}},
+		// Not mapped: "no reasoning" is "minimal" on some models, "none" on
+		// later ones and neither on others, so a guess could invalidate a
+		// valid request.
+		"zero budget":     {&genai.ThinkingConfig{ThinkingBudget: &zero}, nil},
 		"summaries":       {&genai.ThinkingConfig{IncludeThoughts: true}, map[string]any{"summary": "auto"}},
 		"positive budget": {&genai.ThinkingConfig{ThinkingBudget: new(int32(4096))}, nil},
 		"none":            {nil, nil},
@@ -371,11 +381,22 @@ func TestReasoningEffort(t *testing.T) {
 func TestUnsupportedSettingsAreRefused(t *testing.T) {
 	seed := int32(1)
 	pen := float32(0.5)
+	k := float32(40)
+	lp := int32(3)
 	for name, cfg := range map[string]*genai.GenerateContentConfig{
-		"stop":    {StopSequences: []string{"x"}},
-		"seed":    {Seed: &seed},
-		"penalty": {PresencePenalty: &pen},
-		"builtin": {Tools: []*genai.Tool{{GoogleSearch: &genai.GoogleSearch{}}}},
+		"stop":           {StopSequences: []string{"x"}},
+		"seed":           {Seed: &seed},
+		"penalty":        {PresencePenalty: &pen},
+		"builtin":        {Tools: []*genai.Tool{{GoogleSearch: &genai.GoogleSearch{}}}},
+		"top_k":          {TopK: &k},
+		"safety":         {SafetySettings: []*genai.SafetySetting{{Category: genai.HarmCategoryHarassment}}},
+		"logprobs":       {ResponseLogprobs: true, Logprobs: &lp},
+		"cached content": {CachedContent: "projects/p/cachedContents/c"},
+		"audio out":      {ResponseModalities: []string{"AUDIO"}},
+		"speech":         {SpeechConfig: &genai.SpeechConfig{}},
+		"mime":           {ResponseMIMEType: "text/x.enum"},
+		"labels":         {Labels: map[string]string{"team": "sre"}},
+		"media":          {MediaResolution: genai.MediaResolutionHigh},
 	} {
 		t.Run(name, func(t *testing.T) {
 			s := newServer(t)
@@ -498,5 +519,157 @@ func TestExtraBody(t *testing.T) {
 	bad := client(t, s, nil).ModelWith("m", openairesp.ModelOptions{ExtraBody: map[string]any{"store": true}})
 	if _, err := collect(t, bad, &llm.Request{Contents: []*genai.Content{userText("x")}}, false); err == nil {
 		t.Error("extra_body overrode store")
+	}
+}
+
+// A text-only modality and the JSON or plain MIME types are what the
+// dialect already produces, so they are accepted, not refused.
+func TestHarmlessConfigIsAccepted(t *testing.T) {
+	s := newServer(t, reply{body: textReply}, reply{body: textReply})
+	m := client(t, s, nil).Model("m")
+	complete(t, m, &llm.Request{Contents: []*genai.Content{userText("x")}, Config: &genai.GenerateContentConfig{ResponseModalities: []string{"TEXT"}, ResponseMIMEType: "text/plain"}})
+	complete(t, m, &llm.Request{Contents: []*genai.Content{userText("x")}, Config: &genai.GenerateContentConfig{ResponseMIMEType: "application/json"}})
+}
+
+// With reasoning_echo off, encrypted reasoning is neither requested nor
+// replayed, even when the history carries a signature from this dialect.
+func TestReasoningEchoOff(t *testing.T) {
+	s := newServer(t, reply{body: reasoningReply}, reply{body: textReply})
+	on := client(t, s, nil).Model("gpt-5")
+	r := complete(t, on, &llm.Request{Contents: []*genai.Content{userText("x")}})
+	off := client(t, s, func(o *openairesp.Options) { o.ReasoningEcho = false }).Model("gpt-5")
+	complete(t, off, &llm.Request{Contents: []*genai.Content{userText("x"), r.Content, userText("again")}})
+	b := s.body(1)
+	if _, set := b["include"]; set {
+		t.Errorf("include = %v with reasoning_echo off", b["include"])
+	}
+	for _, it := range b["input"].([]any) {
+		if it.(map[string]any)["type"] == "reasoning" {
+			t.Errorf("replayed %v with reasoning_echo off", it)
+		}
+	}
+}
+
+// User-turn parts keep their order: an output between two texts splits
+// them into two messages around it.
+func TestUserTurnOrderIsKept(t *testing.T) {
+	s := newServer(t, reply{body: textReply})
+	complete(t, client(t, s, nil).Model("m"), &llm.Request{Contents: []*genai.Content{
+		userText("go"),
+		{Role: genai.RoleModel, Parts: []*genai.Part{{FunctionCall: &genai.FunctionCall{ID: "c1", Name: "t"}}}},
+		{Role: genai.RoleUser, Parts: []*genai.Part{
+			{Text: "before"},
+			{FunctionResponse: &genai.FunctionResponse{ID: "c1", Name: "t", Response: map[string]any{"ok": true}}},
+			{Text: "after"},
+		}},
+	}})
+	input := s.body(0)["input"].([]any)
+	var got []string
+	for _, it := range input[2:] {
+		m := it.(map[string]any)
+		switch m["type"] {
+		case "message":
+			got = append(got, "message:"+m["content"].([]any)[0].(map[string]any)["text"].(string))
+		default:
+			got = append(got, m["type"].(string))
+		}
+	}
+	want := []string{"message:before", "function_call_output", "message:after"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("user turn = %v, want %v", got, want)
+	}
+}
+
+// unsupportedParam is OpenAI's documented answer to a parameter a model
+// does not take.
+func unsupportedParam(param string) reply {
+	return reply{status: 400, body: `{"error":{"message":"Unsupported parameter: '` + param + `' is not supported with this model.","type":"invalid_request_error","param":"` + param + `","code":"unsupported_parameter"}}`}
+}
+
+// TestRefusedOptionalFieldsSelfCorrect is the alternative to a list of
+// which model takes what: a 400 naming include, temperature or top_p —
+// fields the adapter added on its own — is retried once without it, and
+// the model's refusal is remembered for the Client's life, so the next
+// call goes out without it first time. The response says what was left
+// off.
+func TestRefusedOptionalFieldsSelfCorrect(t *testing.T) {
+	s := newServer(t, unsupportedParam("include"), unsupportedParam("temperature"), reply{body: textReply}, reply{body: textReply})
+	c := client(t, s, nil)
+	temp := float32(0.3)
+	req := &llm.Request{Contents: []*genai.Content{userText("x")}, Config: &genai.GenerateContentConfig{Temperature: &temp}}
+	r := complete(t, c.Model("gpt-4.1"), req)
+	if b := s.body(2); b["include"] != nil || b["temperature"] != nil {
+		t.Errorf("third attempt = %v; want include and temperature left off", b)
+	}
+	got, _ := json.Marshal(r.CustomMetadata[openairesp.DroppedParamsKey])
+	if string(got) != `["include","temperature"]` {
+		t.Errorf("dropped = %s, want [include temperature]", got)
+	}
+	// Remembered: the next call, through a new handle on the same
+	// Client, is right the first time.
+	r = complete(t, c.Model("gpt-4.1"), req)
+	if b := s.body(3); b["include"] != nil || b["temperature"] != nil {
+		t.Errorf("next call = %v; the refusal was not remembered", b)
+	}
+	if r.CustomMetadata[openairesp.DroppedParamsKey] == nil {
+		t.Error("a remembered drop is not reported on the response")
+	}
+}
+
+// Self-correction is per model: another model on the same Client still
+// gets the fields.
+func TestSelfCorrectionIsPerModel(t *testing.T) {
+	s := newServer(t, unsupportedParam("include"), reply{body: textReply}, reply{body: textReply})
+	c := client(t, s, nil)
+	complete(t, c.Model("gpt-4.1"), &llm.Request{Contents: []*genai.Content{userText("x")}})
+	complete(t, c.Model("gpt-5"), &llm.Request{Contents: []*genai.Content{userText("x")}})
+	if inc, _ := s.body(2)["include"].([]any); len(inc) != 1 {
+		t.Errorf("gpt-5 request include = %v; another model's refusal leaked", s.body(2)["include"])
+	}
+}
+
+// A 400 about anything else, or about a field the request did not send,
+// is the caller's: no retry, no loop.
+func TestOtherRefusalsSurface(t *testing.T) {
+	for name, rp := range map[string]reply{
+		"other param":  unsupportedParam("max_output_tokens"),
+		"not sent":     unsupportedParam("top_p"),
+		"no param":     {status: 400, body: `{"error":{"message":"Invalid input.","type":"invalid_request_error"}}`},
+		"server error": {status: 500, body: `{"error":{"message":"boom"}}`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := newServer(t, rp, reply{body: textReply})
+			p := retry.Default()
+			p.MaxRetries = 0
+			c := client(t, s, func(o *openairesp.Options) { o.Retry = &p })
+			_, err := collect(t, c.Model("m"), &llm.Request{Contents: []*genai.Content{userText("x")}}, false)
+			var apiErr *openairesp.APIError
+			if !errors.As(err, &apiErr) {
+				t.Fatalf("err = %v, want the APIError surfaced", err)
+			}
+			s.mu.Lock()
+			n := len(s.bodies)
+			s.mu.Unlock()
+			if n != 1 {
+				t.Errorf("%d requests, want 1: a refusal that names no droppable field must not be retried", n)
+			}
+		})
+	}
+}
+
+// A refusal streams as text partials, as openai-chat surfaces refusals,
+// and the final response is marked.
+func TestStreamedRefusal(t *testing.T) {
+	body := "event: response.refusal.delta\ndata: {\"type\":\"response.refusal.delta\",\"delta\":\"I can't\"}\n\n" +
+		"event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"r\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"id\":\"m\",\"role\":\"assistant\",\"content\":[{\"type\":\"refusal\",\"refusal\":\"I can't\"}]}]}}\n\n"
+	out, err := collect(t, client(t, newServer(t, reply{sse: true, body: body}), nil).Model("m"), &llm.Request{Contents: []*genai.Content{userText("x")}}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 2 || !out[0].Partial || out[0].Content.Parts[0].Text != "I can't" {
+		t.Fatalf("out = %+v; want a refusal partial, then the final", out)
+	}
+	if final := out[1]; final.CustomMetadata[openairesp.RefusalKey] != true || final.Content.Parts[0].Text != "I can't" {
+		t.Errorf("final = %+v", final)
 	}
 }

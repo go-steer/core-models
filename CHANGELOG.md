@@ -12,9 +12,12 @@
     `genai.Part.ThoughtSignature`, so a tool loop keeps its reasoning.
   - **Mapping:** the system prompt goes in `instructions`; function calls
     and outputs are matched by `call_id`; tools use the flat shape.
-    `ThinkingLevel` maps to `reasoning.effort`, and `IncludeThoughts` asks
-    for summaries. Stop sequences, seed and penalties, which the API lacks,
-    are refused.
+    `ThinkingLevel` maps to `reasoning.effort`; a thinking budget is not
+    mapped, since what "no reasoning" means differs by model.
+    `IncludeThoughts` asks for summaries. Tool allow-lists go in an
+    `allowed_tools` choice. Every generation setting the API can't carry
+    (stop, seed, penalties, top_k, logprobs, safety settings and more) is
+    refused with its name.
   - **Streaming:** the final response is decoded from `response.completed`,
     as a non-streamed one is.
   - **Usage:** cached and reasoning tokens, plus vLLM's `cache_write_tokens`.
@@ -26,8 +29,15 @@
   - **Not yet live-tested against OpenAI or xAI** (no key). The encrypted
     reasoning round trip is tested offline against OpenAI's documented
     shape.
-- **`internal/schemajson`:** the genai-to-JSON-Schema conversion, now
-  shared by both OpenAI dialects.
+- **`internal/schemajson`** and **`internal/openaishared`:** the schema
+  conversion, usage mapping, error parsing and tool-call ids, now shared
+  by both OpenAI dialects. openai-chat's behaviour is unchanged.
+- **openai-responses corrects itself on refused optional fields.** When a
+  non-reasoning model refuses `include`, or a reasoning model refuses
+  `temperature` or `top_p`, the 400 is retried once without that field.
+  The refusal is remembered per model, and the response lists what was
+  left off under `core_models.dropped_params`. Encrypted reasoning is only
+  requested where the profile declares `reasoning_echo`.
 - **The conformance corpus's `meta.json` takes a `dialect`,** for a server
   recorded on a dialect its built-in profile doesn't default to.
 

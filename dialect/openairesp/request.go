@@ -15,9 +15,7 @@
 package openairesp
 
 import (
-	"crypto/rand"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,6 +24,7 @@ import (
 
 	"google.golang.org/genai"
 
+	"github.com/go-steer/core-models/internal/openaishared"
 	"github.com/go-steer/core-models/internal/schemajson"
 	"github.com/go-steer/core-models/llm"
 )
@@ -37,10 +36,15 @@ func (m *model) buildRequest(req *llm.Request, stream bool) (*responsesRequest, 
 	out := &responsesRequest{
 		Model: m.id,
 		// Stateless: nothing is kept server-side, so a tool loop carries
-		// its reasoning forward as encrypted content (§7.2).
-		Store:   false,
-		Include: []string{"reasoning.encrypted_content"},
-		Stream:  stream,
+		// its reasoning forward as encrypted content (§7.2) — when the
+		// profile replays reasoning at all (capabilities.reasoning_echo).
+		// Without replay the encrypted content would be fetched for
+		// nothing, and a server that does not offer it would refuse.
+		Store:  false,
+		Stream: stream,
+	}
+	if m.opts.ReasoningEcho {
+		out.Include = []string{includeEncryptedReasoning}
 	}
 	cfg := req.Config
 	if cfg == nil {
@@ -49,7 +53,7 @@ func (m *model) buildRequest(req *llm.Request, stream bool) (*responsesRequest, 
 	// instructions is the Responses API's field for the system prompt,
 	// and keeps the input list to the conversation itself.
 	out.Instructions = textOf(cfg.SystemInstruction)
-	items, err := convertContents(req.Contents)
+	items, err := convertContents(req.Contents, m.opts.ReasoningEcho)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -63,15 +67,11 @@ func (m *model) buildRequest(req *llm.Request, stream bool) (*responsesRequest, 
 
 func (m *model) applyConfig(out *responsesRequest, cfg *genai.GenerateContentConfig) (map[string]any, error) {
 	var notes map[string]any
-	switch {
-	case cfg.CandidateCount > 1:
+	if cfg.CandidateCount > 1 {
 		return nil, fmt.Errorf("openai-responses: candidate_count %d: only one candidate is supported", cfg.CandidateCount)
-	case len(cfg.StopSequences) > 0:
-		return nil, errors.New("openai-responses: stop sequences: the Responses API has no stop parameter")
-	case cfg.Seed != nil:
-		return nil, errors.New("openai-responses: seed: the Responses API has no seed parameter")
-	case cfg.PresencePenalty != nil || cfg.FrequencyPenalty != nil:
-		return nil, errors.New("openai-responses: presence and frequency penalties: the Responses API has neither")
+	}
+	if field := unsupportedConfig(cfg); field != "" {
+		return nil, fmt.Errorf("openai-responses: %s: the Responses API has no equivalent, so the request is refused rather than sent without it", field)
 	}
 	if cfg.MaxOutputTokens > 0 {
 		out.MaxOutputTokens = ptr(int64(cfg.MaxOutputTokens))
@@ -95,25 +95,10 @@ func (m *model) applyConfig(out *responsesRequest, cfg *genai.GenerateContentCon
 	}
 
 	if tc := cfg.ToolConfig; tc != nil && tc.FunctionCallingConfig != nil {
-		fc := tc.FunctionCallingConfig
-		switch fc.Mode {
-		case genai.FunctionCallingConfigModeAuto, genai.FunctionCallingConfigModeValidated:
-			out.ToolChoice = "auto"
-		case genai.FunctionCallingConfigModeNone:
-			out.ToolChoice = "none"
-		case genai.FunctionCallingConfigModeAny:
-			switch {
-			case m.opts.NoForcedToolChoice:
-				// The model rejects a forced choice: "auto" with the same
-				// tools is the closest request it will take, and the
-				// caller is told it was not forced.
-				out.ToolChoice = "auto"
-				notes = map[string]any{ToolChoiceKey: true}
-			case len(fc.AllowedFunctionNames) == 1:
-				out.ToolChoice = namedToolChoice{Type: "function", Name: fc.AllowedFunctionNames[0]}
-			default:
-				out.ToolChoice = "required"
-			}
+		choice, downgraded := m.toolChoice(tc.FunctionCallingConfig)
+		out.ToolChoice = choice
+		if downgraded {
+			notes = map[string]any{ToolChoiceKey: true}
 		}
 	}
 
@@ -130,12 +115,107 @@ func (m *model) applyConfig(out *responsesRequest, cfg *genai.GenerateContentCon
 	return notes, nil
 }
 
-// reasoningOf maps genai's thinking settings onto reasoning: a thinking
-// level names an effort directly, and a budget of zero is the least
-// reasoning the API offers. A positive budget is not mapped: the
-// Responses API has no token budget, so the server's default effort
-// applies. IncludeThoughts asks for reasoning summaries, which OpenAI
-// returns only on request.
+// toolChoice maps a function-calling config onto tool_choice. An
+// allow-list is kept, never widened to every tool: one name forced is a
+// named choice, and otherwise the list goes in an allowed_tools choice
+// with mode auto or required. The bool reports a forced choice sent as
+// unforced because the model rejects forcing (NoForcedToolChoice).
+func (m *model) toolChoice(fc *genai.FunctionCallingConfig) (any, bool) {
+	names := fc.AllowedFunctionNames
+	allowed := func(mode string) any {
+		tools := make([]namedToolChoice, len(names))
+		for i, n := range names {
+			tools[i] = namedToolChoice{Type: "function", Name: n}
+		}
+		return allowedTools{Type: "allowed_tools", Mode: mode, Tools: tools}
+	}
+	switch fc.Mode {
+	case genai.FunctionCallingConfigModeNone:
+		return "none", false
+	case genai.FunctionCallingConfigModeAny:
+		switch {
+		case m.opts.NoForcedToolChoice:
+			// The model rejects a forced choice: the closest request it
+			// takes is the same tools unforced, and the caller is told.
+			if len(names) > 0 {
+				return allowed("auto"), true
+			}
+			return "auto", true
+		case len(names) == 1:
+			return namedToolChoice{Type: "function", Name: names[0]}, false
+		case len(names) > 1:
+			return allowed("required"), false
+		}
+		return "required", false
+	case genai.FunctionCallingConfigModeAuto, genai.FunctionCallingConfigModeValidated:
+		if len(names) > 0 {
+			return allowed("auto"), false
+		}
+		return "auto", false
+	}
+	return nil, false
+}
+
+// unsupportedConfig names the first generation setting the Responses
+// API cannot carry, or "" when there is none. Every one of them changes
+// what the model produces or how it is billed, so dropping it quietly
+// would answer a different request than the one asked.
+func unsupportedConfig(cfg *genai.GenerateContentConfig) string {
+	switch {
+	case len(cfg.StopSequences) > 0:
+		return "stop sequences"
+	case cfg.Seed != nil:
+		return "seed"
+	case cfg.PresencePenalty != nil || cfg.FrequencyPenalty != nil:
+		return "presence and frequency penalties"
+	case cfg.TopK != nil:
+		return "top_k"
+	case cfg.ResponseLogprobs || cfg.Logprobs != nil:
+		return "logprobs"
+	case len(cfg.SafetySettings) > 0:
+		return "safety settings"
+	case cfg.CachedContent != "":
+		return "a cached-content reference (a Gemini context cache)"
+	case !textOnly(cfg.ResponseModalities):
+		return fmt.Sprintf("response modalities %v", cfg.ResponseModalities)
+	case cfg.SpeechConfig != nil:
+		return "speech config"
+	case cfg.AudioTimestamp:
+		return "audio timestamps"
+	case cfg.ImageConfig != nil:
+		return "image config"
+	case cfg.MediaResolution != "" && cfg.MediaResolution != genai.MediaResolutionUnspecified:
+		return "media resolution"
+	case cfg.RoutingConfig != nil || cfg.ModelSelectionConfig != nil:
+		return "model routing"
+	case len(cfg.Labels) > 0:
+		return "labels"
+	case cfg.ServiceTier != "":
+		return "service tier"
+	case cfg.ModelArmorConfig != nil:
+		return "Model Armor config"
+	case cfg.EnableEnhancedCivicAnswers != nil:
+		return "enhanced civic answers"
+	case cfg.ResponseMIMEType != "" && cfg.ResponseMIMEType != "text/plain" && cfg.ResponseMIMEType != "application/json":
+		return fmt.Sprintf("response MIME type %q", cfg.ResponseMIMEType)
+	}
+	return ""
+}
+
+// textOnly reports whether modalities asks for nothing but text, which
+// is all this dialect produces. None asked for counts as text.
+func textOnly(modalities []string) bool {
+	return len(modalities) == 0 || (len(modalities) == 1 && strings.EqualFold(modalities[0], "TEXT"))
+}
+
+// reasoningOf maps genai's thinking settings onto reasoning. A thinking
+// level names an effort directly. A thinking budget is not mapped, not
+// even zero: the Responses API has no token budget, and the value that
+// means "no reasoning" differs by model ("minimal" on some, "none" on
+// later ones, neither on others), so guessing would make a valid
+// request invalid. Thinking off is expressible only as a ThinkingLevel.
+// IncludeThoughts asks for reasoning summaries, which OpenAI returns
+// only on request.
 func reasoningOf(tc *genai.ThinkingConfig) *reasoningOpts {
 	if tc == nil {
 		return nil
@@ -150,10 +230,6 @@ func reasoningOf(tc *genai.ThinkingConfig) *reasoningOpts {
 		r.Effort = "medium"
 	case genai.ThinkingLevelHigh:
 		r.Effort = "high"
-	default:
-		if tc.ThinkingBudget != nil && *tc.ThinkingBudget == 0 {
-			r.Effort = "minimal"
-		}
 	}
 	if tc.IncludeThoughts {
 		r.Summary = "auto"
@@ -189,8 +265,8 @@ func parametersOf(d *genai.FunctionDeclaration) any {
 // convertContents turns the conversation into input items, keeping the
 // order of parts within each turn: a model turn's reasoning, text and
 // function calls; a user turn's function outputs and message.
-func convertContents(contents []*genai.Content) ([]inputItem, error) {
-	ids := newIDAssigner()
+func convertContents(contents []*genai.Content, echoReasoning bool) ([]inputItem, error) {
+	ids := openaishared.NewIDAssigner()
 	var out []inputItem
 	for ci, c := range contents {
 		if c == nil {
@@ -200,7 +276,7 @@ func convertContents(contents []*genai.Content) ([]inputItem, error) {
 		var err error
 		switch c.Role {
 		case genai.RoleModel:
-			items, err = modelItems(c, ids)
+			items, err = modelItems(c, ids, echoReasoning)
 		case genai.RoleUser, "":
 			items, err = userItems(c, ids)
 		default:
@@ -214,7 +290,7 @@ func convertContents(contents []*genai.Content) ([]inputItem, error) {
 	return out, nil
 }
 
-func modelItems(c *genai.Content, ids *idAssigner) ([]inputItem, error) {
+func modelItems(c *genai.Content, ids *openaishared.IDAssigner, echoReasoning bool) ([]inputItem, error) {
 	var out []inputItem
 	var text strings.Builder
 	flush := func() {
@@ -228,20 +304,21 @@ func modelItems(c *genai.Content, ids *idAssigner) ([]inputItem, error) {
 		case p == nil:
 		case p.FunctionCall != nil:
 			flush()
-			args, err := json.Marshal(nonNilMap(p.FunctionCall.Args))
+			args, err := json.Marshal(openaishared.NonNilMap(p.FunctionCall.Args))
 			if err != nil {
 				return nil, fmt.Errorf("tool call %q: arguments: %w", p.FunctionCall.Name, err)
 			}
 			out = append(out, inputItem{
-				Type: "function_call", CallID: ids.call(p.FunctionCall.ID, p.FunctionCall.Name),
+				Type: "function_call", CallID: ids.Call(p.FunctionCall.ID, p.FunctionCall.Name),
 				Name: p.FunctionCall.Name, Arguments: string(args),
 			})
 		case p.Thought:
-			// Reasoning goes back only as the encrypted item this dialect
-			// received: with store false, OpenAI accepts a reasoning item
-			// only with its encrypted content, and a thought from another
-			// provider, or with none, has nothing to replay.
-			if r, ok := decodeSignature(p.ThoughtSignature); ok {
+			// Reasoning goes back only where the profile replays it
+			// (capabilities.reasoning_echo), and only as the encrypted item
+			// this dialect received: with store false, OpenAI accepts a
+			// reasoning item only with its encrypted content, and a thought
+			// from another provider, or with none, has nothing to replay.
+			if r, ok := decodeSignature(p.ThoughtSignature); ok && echoReasoning {
 				flush()
 				summary := []summaryPart{}
 				if p.Text != "" {
@@ -261,9 +338,19 @@ func modelItems(c *genai.Content, ids *idAssigner) ([]inputItem, error) {
 	return out, nil
 }
 
-func userItems(c *genai.Content, ids *idAssigner) ([]inputItem, error) {
+// userItems turns a user turn into input items in part order: a run of
+// text and images is one message, and a function output between two
+// runs splits them, so [text, output, text] stays three items in that
+// order rather than the output hoisted and the text merged.
+func userItems(c *genai.Content, ids *openaishared.IDAssigner) ([]inputItem, error) {
 	var out []inputItem
 	var parts []contentPart
+	flush := func() {
+		if len(parts) > 0 {
+			out = append(out, inputItem{Type: "message", Role: "user", Content: parts})
+			parts = nil
+		}
+	}
 	for _, p := range c.Parts {
 		switch {
 		case p == nil:
@@ -272,7 +359,8 @@ func userItems(c *genai.Content, ids *idAssigner) ([]inputItem, error) {
 			if err != nil {
 				return nil, fmt.Errorf("tool result %q: %w", p.FunctionResponse.Name, err)
 			}
-			out = append(out, inputItem{Type: "function_call_output", CallID: ids.response(p.FunctionResponse.ID, p.FunctionResponse.Name), Output: string(body)})
+			flush()
+			out = append(out, inputItem{Type: "function_call_output", CallID: ids.Response(p.FunctionResponse.ID, p.FunctionResponse.Name), Output: string(body)})
 		case p.InlineData != nil:
 			if !strings.HasPrefix(p.InlineData.MIMEType, "image/") {
 				return nil, fmt.Errorf("inline data of type %q: only images are supported", p.InlineData.MIMEType)
@@ -293,9 +381,7 @@ func userItems(c *genai.Content, ids *idAssigner) ([]inputItem, error) {
 			}
 		}
 	}
-	if len(parts) > 0 {
-		out = append(out, inputItem{Type: "message", Role: "user", Content: parts})
-	}
+	flush()
 	return out, nil
 }
 
@@ -337,67 +423,8 @@ func decodeSignature(b []byte) (reasoningSignature, bool) {
 	return r, true
 }
 
-// idAssigner gives every function call a call_id and every output the
-// call_id of the call it answers. History written by another provider
-// (Gemini does not set ids) has none; such calls get a generated id and
-// their outputs are matched to them by name, in order.
-type idAssigner struct {
-	pending map[string][]string
-}
-
-func newIDAssigner() *idAssigner { return &idAssigner{pending: map[string][]string{}} }
-
-func (a *idAssigner) call(id, name string) string {
-	if id != "" {
-		return id
-	}
-	id = newCallID()
-	a.pending[name] = append(a.pending[name], id)
-	return id
-}
-
-func (a *idAssigner) response(id, name string) string {
-	if id != "" {
-		return id
-	}
-	if q := a.pending[name]; len(q) > 0 {
-		a.pending[name] = q[1:]
-		return q[0]
-	}
-	return newCallID()
-}
-
-func newCallID() string {
-	var b [12]byte
-	_, _ = rand.Read(b[:])
-	return "call_" + hex.EncodeToString(b[:])
-}
-
-func textOf(c *genai.Content) string {
-	if c == nil {
-		return ""
-	}
-	var parts []string
-	for _, p := range c.Parts {
-		if p != nil && p.Text != "" && !p.Thought {
-			parts = append(parts, p.Text)
-		}
-	}
-	return strings.Join(parts, "\n\n")
-}
-
-func nonNilMap(m map[string]any) map[string]any {
-	if m == nil {
-		return map[string]any{}
-	}
-	return m
-}
+func textOf(c *genai.Content) string { return openaishared.TextOf(c) }
 
 func ptr[T any](v T) *T { return &v }
 
-func f64(v *float32) *float64 {
-	if v == nil {
-		return nil
-	}
-	return ptr(float64(*v))
-}
+func f64(v *float32) *float64 { return openaishared.F64(v) }

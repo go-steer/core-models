@@ -358,8 +358,23 @@ reasoning. Usage maps `input_tokens_details.cached_tokens` and
 
 **As built (2026-10-13), package `dialect/openairesp`:**
 - **net/http and its own wire types,** like `openai-chat`, not openai-go (D5,
-  amended). The genai-schema-to-JSON-Schema conversion is shared with
-  `openai-chat` through `internal/schemajson`.
+  amended). What the two OpenAI dialects do identically is shared, not
+  copied: `internal/schemajson` (genai Schema → JSON Schema) and
+  `internal/openaishared` (usage mapping, error parsing, tool-call ids).
+- **Encrypted reasoning only where reasoning is replayed:** `include:
+  ["reasoning.encrypted_content"]` is sent when the profile declares
+  `capabilities.reasoning_echo` (the `openai` built-in does; `vllm` does
+  not), and reasoning is replayed only then.
+- **Self-correcting optional fields,** not a model list: OpenAI's
+  non-reasoning models refuse `include`, and its reasoning models refuse
+  `temperature` and `top_p`. A 400 that names one of those fields (by
+  `param`, or in the message when there is no `param`), when the request
+  carried it, is retried once without it, and the refusal is remembered per
+  model for the Client's life. The response lists what was left off under
+  `core_models.dropped_params`. A 400 about anything else is the caller's,
+  so this cannot loop. The cost is one refused round trip per model per
+  process. A list of which model takes what would go stale with every
+  release, and the server's own refusal is the authority.
 - **System prompt → `instructions`,** the API's own field for it, which keeps
   the input list to the conversation.
 - **Turns → input items in part order:** user text and images as a `message`
@@ -374,11 +389,24 @@ reasoning. Usage maps `input_tokens_details.cached_tokens` and
   plain reasoning, or another provider's signature — is not replayed: with
   `store: false`, OpenAI accepts a reasoning item only with its encrypted
   content.
-- **`reasoning`:** `ThinkingLevel` maps to `effort` directly, a zero
-  `ThinkingBudget` to `minimal`; a positive budget is not mapped, since the API
-  has no token budget. `IncludeThoughts` asks for summaries (`summary: auto`).
-- **Refused, not dropped:** stop sequences, seed and penalties, which the API
-  does not have, and provider built-ins.
+- **`reasoning`:** `ThinkingLevel` maps to `effort` directly. A
+  `ThinkingBudget` is not mapped, not even zero: the API has no token budget,
+  and the value that means "no reasoning" differs by model (`minimal`, `none`,
+  or neither), so thinking off is expressible only as a `ThinkingLevel`.
+  `IncludeThoughts` asks for summaries (`summary: auto`).
+- **Tool choice keeps an allow-list:** one name forced is a named choice;
+  several names, or names with mode auto, go in an `allowed_tools` choice
+  (`mode: auto` or `required`).
+- **Refused, not dropped:** every generation setting the API cannot carry,
+  each named in the error: stop sequences, seed, penalties, top_k, logprobs,
+  safety settings, a cached-content reference, non-text response modalities,
+  speech, audio timestamps, image config, media resolution, routing, labels,
+  service tier, Model Armor, civic answers, and a response MIME type other
+  than text or JSON; and provider built-ins. (`openai-chat` still drops most
+  of these silently; aligning it is a separate change, since it alters a
+  released dialect's behaviour.)
+- **Refusals** stream as text partials, as `openai-chat` surfaces them, and
+  the final response carries `core_models.refusal`.
 - **Streaming:** text and reasoning deltas become partials; the final response
   is decoded from `response.completed` (or `response.incomplete`), which
   carries the whole response, so a streamed and an unstreamed call cannot
@@ -389,7 +417,8 @@ reasoning. Usage maps `input_tokens_details.cached_tokens` and
   so it is subtracted from candidates. vLLM's
   `input_tokens_details.cache_write_tokens` maps to `CacheWriteTokens`.
 - **Profiles:** built-in `openai` (Responses) and `xai` (Chat Completions;
-  extend it with `dialect: openai-responses` to opt in). Any profile can set
+  extend it with `dialect: openai-responses` to opt in), with backends named
+  `openai` and `xai`, so a derived profile prices under the vendor. Any profile can set
   that dialect: vLLM serves `/v1/responses`, and the conformance corpus
   records Gemma 4 on our vLLM through it.
 - **Owed:** the L2 exit criterion's live tool loop against OpenAI and xAI,

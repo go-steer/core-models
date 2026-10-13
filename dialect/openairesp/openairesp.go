@@ -42,16 +42,16 @@ import (
 	"fmt"
 	"io"
 	"iter"
-	"math"
 	"net/http"
 	"strings"
+	"sync"
 
 	"google.golang.org/genai"
 
 	"github.com/go-steer/core-models/auth"
+	"github.com/go-steer/core-models/internal/openaishared"
 	"github.com/go-steer/core-models/llm"
 	"github.com/go-steer/core-models/retry"
-	"github.com/go-steer/core-models/usage"
 )
 
 // Options configures a Client. A coremodels.Open caller never builds
@@ -75,6 +75,10 @@ type Options struct {
 	// ResponseSchema: the server enforces text.format json_schema. A
 	// request that needs one is refused when false.
 	ResponseSchema bool
+	// ReasoningEcho: carry reasoning forward between turns — request its
+	// encrypted content and replay it as a reasoning item. When false,
+	// neither happens.
+	ReasoningEcho bool
 	// CachedTokensUnreliable: record cached tokens as not reported even
 	// when the server sends them.
 	CachedTokensUnreliable bool
@@ -89,6 +93,7 @@ type Options struct {
 // ModelOptions are the per-model refinements of Options.
 type ModelOptions struct {
 	ResponseSchema     *bool
+	ReasoningEcho      *bool
 	NoForcedToolChoice *bool
 	// ExtraBody, when non-nil, replaces the Client's.
 	ExtraBody map[string]any
@@ -99,6 +104,12 @@ type Client struct {
 	opts     Options
 	endpoint string
 	http     *http.Client
+
+	// dropped remembers, per model id, the optional request fields the
+	// server has refused (see dropOn), so later calls leave them off
+	// without another refused round trip.
+	mu      sync.Mutex
+	dropped map[string]map[string]bool
 }
 
 // New returns a Client for opts.
@@ -127,6 +138,7 @@ func New(opts Options) (*Client, error) {
 		opts:     opts,
 		endpoint: strings.TrimRight(opts.BaseURL, "/") + "/responses",
 		http:     &hc,
+		dropped:  map[string]map[string]bool{},
 	}, nil
 }
 
@@ -142,6 +154,9 @@ func (c *Client) ModelWith(id string, mo ModelOptions) llm.LLM {
 	}
 	if mo.NoForcedToolChoice != nil {
 		o.NoForcedToolChoice = *mo.NoForcedToolChoice
+	}
+	if mo.ReasoningEcho != nil {
+		o.ReasoningEcho = *mo.ReasoningEcho
 	}
 	if mo.ExtraBody != nil {
 		o.ExtraBody = mo.ExtraBody
@@ -164,6 +179,8 @@ type APIError struct {
 	Type       string
 	Code       string
 	Message    string
+	// Param is the request field the server blamed, when it named one.
+	Param string
 }
 
 func (e *APIError) Error() string {
@@ -200,7 +217,15 @@ const (
 	// ToolChoiceKey marks a response whose request asked for a forced
 	// tool call the model cannot take, and was sent with "auto" instead.
 	ToolChoiceKey = "core_models.tool_choice_downgraded"
+	// DroppedParamsKey lists the optional fields left off this request
+	// because the model refuses them ("include", "temperature", "top_p");
+	// see dropOn.
+	DroppedParamsKey = "core_models.dropped_params"
 )
+
+// includeEncryptedReasoning is the include value that returns a
+// reasoning model's encrypted reasoning for replay.
+const includeEncryptedReasoning = "reasoning.encrypted_content"
 
 func (m *model) GenerateContent(ctx context.Context, req *llm.Request, stream bool) iter.Seq2[*llm.Response, error] {
 	return func(yield func(*llm.Response, error) bool) {
@@ -218,10 +243,20 @@ func (m *model) GenerateContent(ctx context.Context, req *llm.Request, stream bo
 			// is its generation time, bounded by UnaryHeaderTimeout.
 			ctx = retry.MarkUnary(ctx)
 		}
-		resp, err := m.send(ctx, body)
-		if err != nil {
-			yield(nil, err)
-			return
+		notes = m.applyDropped(body, notes)
+		var resp *http.Response
+		for {
+			resp, err = m.send(ctx, body)
+			if err == nil {
+				break
+			}
+			field := dropOn(err, body)
+			if field == "" {
+				yield(nil, err)
+				return
+			}
+			m.remember(field)
+			notes = m.applyDropped(body, notes)
 		}
 		defer func() { _ = resp.Body.Close() }()
 
@@ -307,29 +342,91 @@ func (m *model) encode(body *responsesRequest) ([]byte, error) {
 
 func apiError(resp *http.Response) error {
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-	e := &APIError{StatusCode: resp.StatusCode}
-	var env errorEnvelope
-	_ = json.Unmarshal(raw, &env)
-	switch {
-	case env.Error != nil:
-		e.Message, e.Type, e.Code = env.Error.Message, env.Error.Type, codeString(env.Error.Code)
-	case env.Message != "":
-		e.Message = env.Message
-	case env.Detail != "":
-		e.Message = env.Detail
-	}
-	if e.Message == "" {
-		e.Message = strings.TrimSpace(string(raw))
-	}
-	return e
+	f := openaishared.ParseError(raw)
+	return &APIError{StatusCode: resp.StatusCode, Type: f.Type, Code: f.Code, Message: f.Message, Param: f.Param}
 }
 
-func codeString(raw json.RawMessage) string {
-	var s string
-	if json.Unmarshal(raw, &s) == nil {
-		return s
+// dropOn returns the optional request field a 400 refused, when it is
+// one the adapter added on its own and can leave off: include (encrypted
+// reasoning, which non-reasoning models refuse), temperature and top_p
+// (which reasoning models refuse). The field must be on body, so a
+// refusal can never loop. "" means the error is the caller's to see.
+//
+// This is self-correction rather than a list of which model accepts
+// what: OpenAI's model line changes faster than a built-in profile, and
+// the server's own refusal is the authority. The field is remembered
+// per model for the Client's life (remember), so the cost is one
+// refused round trip per model per process.
+func dropOn(err error, body *responsesRequest) string {
+	var e *APIError
+	if !errors.As(err, &e) || e.StatusCode != http.StatusBadRequest {
+		return ""
 	}
-	return strings.Trim(string(raw), `"`)
+	blamed := func(field string, quoted ...string) bool {
+		if e.Param == field || strings.HasPrefix(e.Param, field+".") || strings.HasPrefix(e.Param, field+"[") {
+			return true
+		}
+		if e.Param != "" {
+			return false
+		}
+		for _, q := range quoted {
+			if strings.Contains(e.Message, q) {
+				return true
+			}
+		}
+		return false
+	}
+	switch {
+	case len(body.Include) > 0 && blamed("include", "encrypted_content", "'include'"):
+		return "include"
+	case body.Temperature != nil && blamed("temperature", "'temperature'"):
+		return "temperature"
+	case body.TopP != nil && blamed("top_p", "'top_p'"):
+		return "top_p"
+	}
+	return ""
+}
+
+// remember records that this model refuses field.
+func (m *model) remember(field string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.dropped[m.id] == nil {
+		m.dropped[m.id] = map[string]bool{}
+	}
+	m.dropped[m.id][field] = true
+}
+
+// applyDropped leaves off body the fields this model is known to refuse,
+// and lists the ones it actually removed in the notes, so the caller can
+// see the request it got was not the one it asked for.
+func (m *model) applyDropped(body *responsesRequest, notes map[string]any) map[string]any {
+	m.mu.Lock()
+	known := m.dropped[m.id]
+	m.mu.Unlock()
+	var removed []string
+	if known["include"] && len(body.Include) > 0 {
+		body.Include = nil
+		removed = append(removed, "include")
+	}
+	if known["temperature"] && body.Temperature != nil {
+		body.Temperature = nil
+		removed = append(removed, "temperature")
+	}
+	if known["top_p"] && body.TopP != nil {
+		body.TopP = nil
+		removed = append(removed, "top_p")
+	}
+	if len(removed) == 0 {
+		return notes
+	}
+	out := map[string]any{}
+	for k, v := range notes {
+		out[k] = v
+	}
+	prev, _ := out[DroppedParamsKey].([]string)
+	out[DroppedParamsKey] = append(append([]string{}, prev...), removed...)
+	return out
 }
 
 // decodeStream yields a partial Response per text or reasoning delta,
@@ -387,6 +484,12 @@ func (m *model) decodeStream(r io.Reader) iter.Seq2[*llm.Response, error] {
 				if ev.Delta != "" && !yield(partial(&genai.Part{Text: ev.Delta}, m.id), nil) {
 					return
 				}
+			case "response.refusal.delta":
+				// A refusal streams as text, as openai-chat surfaces it; the
+				// final response carries RefusalKey.
+				if ev.Delta != "" && !yield(partial(&genai.Part{Text: ev.Delta}, m.id), nil) {
+					return
+				}
 			case "response.reasoning_summary_text.delta", "response.reasoning_text.delta":
 				if ev.Delta != "" && !yield(partial(&genai.Part{Text: ev.Delta, Thought: true}, m.id), nil) {
 					return
@@ -405,7 +508,7 @@ func (m *model) decodeStream(r io.Reader) iter.Seq2[*llm.Response, error] {
 				yield(final, nil)
 				return
 			case "error":
-				yield(nil, &APIError{Code: codeString(ev.Code), Message: ev.Message})
+				yield(nil, &APIError{Code: openaishared.CodeString(ev.Code), Message: ev.Message})
 				return
 			}
 		}
@@ -432,7 +535,7 @@ func (m *model) finish(r *response) (*llm.Response, error) {
 	if r.Status == "failed" || r.Status == "cancelled" {
 		e := &APIError{Message: "status " + r.Status}
 		if r.Error != nil {
-			e.Message, e.Type, e.Code = r.Error.Message, r.Error.Type, codeString(r.Error.Code)
+			e.Message, e.Type, e.Code = r.Error.Message, r.Error.Type, openaishared.CodeString(r.Error.Code)
 		}
 		return nil, e
 	}
@@ -469,7 +572,7 @@ func (m *model) finish(r *response) (*llm.Response, error) {
 			}
 			id := it.CallID
 			if id == "" {
-				id = newCallID()
+				id = openaishared.NewCallID()
 			}
 			content.Parts = append(content.Parts, &genai.Part{FunctionCall: &genai.FunctionCall{ID: id, Name: it.Name, Args: args}})
 		}
@@ -538,85 +641,29 @@ func finishReason(r *response) (genai.FinishReason, string) {
 	return genai.FinishReasonOther, r.Status
 }
 
-// mapUsage maps the server's usage onto genai's struct and a Detail. A
-// field the server did not send is absent from both — never a zero.
-// Reasoning tokens are counted inside output_tokens, as in Chat
-// Completions, so they are subtracted from candidates where reported.
+// mapUsage maps the server's usage onto genai's struct and a Detail
+// (openaishared.MapUsage): a field the server did not send is absent
+// from both — never a zero.
 func (m *model) mapUsage(u *wireUsage, id, served string, md map[string]any) (*genai.GenerateContentResponseUsageMetadata, map[string]any) {
-	d := &usage.Detail{
-		ServedModel:       served,
-		ProviderRequestID: id,
-		Backend:           m.opts.Backend,
-		Region:            m.opts.Region,
+	stamp := openaishared.Stamp{
+		RequestID: id, ServedModel: served, Backend: m.opts.Backend, Region: m.opts.Region,
+		CachedUnreliable: m.opts.CachedTokensUnreliable,
 	}
-	var um *genai.GenerateContentResponseUsageMetadata
-	if u != nil {
-		um = &genai.GenerateContentResponseUsageMetadata{}
-		var reasoning int64
-		if u.OutputTokensDetails != nil && u.OutputTokensDetails.ReasoningTokens != nil {
-			reasoning = *u.OutputTokensDetails.ReasoningTokens
-			d.ReasoningTokens = ptr(reasoning)
-			um.ThoughtsTokenCount = clamp32(reasoning)
-		}
-		if u.InputTokens != nil {
-			um.PromptTokenCount = clamp32(*u.InputTokens)
-		}
-		if u.OutputTokens != nil {
-			um.CandidatesTokenCount = clamp32(*u.OutputTokens - reasoning)
-		}
-		switch {
-		case u.TotalTokens != nil:
-			um.TotalTokenCount = clamp32(*u.TotalTokens)
-		case u.InputTokens != nil && u.OutputTokens != nil:
-			um.TotalTokenCount = clamp32(*u.InputTokens + *u.OutputTokens)
-		}
-		if !m.opts.CachedTokensUnreliable && u.InputTokensDetails != nil {
-			if c := u.InputTokensDetails.CachedTokens; c != nil {
-				d.CacheReadTokens = ptr(*c)
-				um.CachedContentTokenCount = clamp32(*c)
-			}
-			// genai's struct has no cache-write bucket; the Detail does.
-			if w := u.InputTokensDetails.CacheWriteTokens; w != nil {
-				d.CacheWriteTokens = ptr(*w)
-			}
-		}
+	if u == nil {
+		return openaishared.MapUsage(nil, stamp, md)
 	}
-	resp := &llm.Response{CustomMetadata: md}
-	usage.Attach(resp, d)
-	return um, resp.CustomMetadata
+	n := &openaishared.Usage{Input: u.InputTokens, Output: u.OutputTokens, Total: u.TotalTokens}
+	if u.OutputTokensDetails != nil {
+		n.Reasoning = u.OutputTokensDetails.ReasoningTokens
+	}
+	if u.InputTokensDetails != nil {
+		n.CacheRead = u.InputTokensDetails.CachedTokens
+		// cache_write_tokens is vLLM's; OpenAI does not send it.
+		n.CacheWrite = u.InputTokensDetails.CacheWriteTokens
+	}
+	return openaishared.MapUsage(n, stamp, md)
 }
 
-// clamp32 narrows a count to genai's int32 fields, saturating rather
-// than wrapping. Detail keeps the full int64.
-func clamp32(n int64) int32 {
-	switch {
-	case n > math.MaxInt32:
-		return math.MaxInt32
-	case n < 0:
-		return 0
-	}
-	return int32(n)
-}
+func stampNotes(r *llm.Response, notes map[string]any) { openaishared.StampNotes(r, notes) }
 
-func stampNotes(r *llm.Response, notes map[string]any) {
-	if len(notes) == 0 {
-		return
-	}
-	if r.CustomMetadata == nil {
-		r.CustomMetadata = map[string]any{}
-	}
-	for k, v := range notes {
-		r.CustomMetadata[k] = v
-	}
-}
-
-func stampRetry(r *llm.Response, rec *retry.Record) {
-	snap := rec.Snapshot()
-	if snap == (retry.Snapshot{}) {
-		return
-	}
-	if r.CustomMetadata == nil {
-		r.CustomMetadata = map[string]any{}
-	}
-	r.CustomMetadata[retry.MetadataKey] = snap
-}
+func stampRetry(r *llm.Response, rec *retry.Record) { openaishared.StampRetry(r, rec) }

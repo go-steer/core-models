@@ -131,6 +131,7 @@ func Open(ctx context.Context, p profile.Profile, opts Options) (Provider, error
 			Backend:                rp.BackendName(),
 			Region:                 r.Params["region"],
 			ResponseSchema:         profile.Has(rp.Capabilities.ResponseSchema),
+			ReasoningEcho:          profile.Has(rp.Capabilities.ReasoningEcho),
 			CachedTokensUnreliable: rp.Usage.CachedTokens == profile.Unreliable,
 		})
 		if err != nil {
@@ -140,6 +141,7 @@ func Open(ctx context.Context, p profile.Profile, opts Options) (Provider, error
 			caps := rp.CapabilitiesFor(id)
 			return c.ModelWith(id, openairesp.ModelOptions{
 				ResponseSchema:     new(profile.Has(caps.ResponseSchema)),
+				ReasoningEcho:      new(profile.Has(caps.ReasoningEcho)),
 				NoForcedToolChoice: new(caps.ForcedToolChoice != nil && !*caps.ForcedToolChoice),
 				ExtraBody:          rp.ExtraBodyFor(id),
 			})
