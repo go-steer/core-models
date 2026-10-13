@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Added
+
+- **A monthly live canary** (`.github/workflows/live-canary.yml`): the
+  conformance scenarios against OpenAI, xAI, Anthropic and the Gemini API,
+  opening a `live-canary` issue when a leg fails. Never runs on PRs.
+
 ## v0.13.1 (2026-10-13)
 
 ### Fixed

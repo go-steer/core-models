@@ -198,3 +198,28 @@ All nine replay on every pull request.
 
   Add `--rows` for a cheap subset first. The board reports the tokens each
   model used.
+
+## Live canary
+
+A recorded corpus proves the adapter still speaks a dialect the way the
+server spoke it on the day it was recorded. To notice a provider changing
+underneath it, a monthly workflow (`live-canary`) runs the same scenarios
+live, one leg per provider and dialect:
+
+| Leg | Profile | Model |
+|---|---|---|
+| `openai-chat` | `openai`, Chat Completions | `gpt-5-mini` |
+| `openai-responses` | `openai` | `gpt-5-mini` |
+| `xai-chat` | `xai` | `grok-4.20-0309-reasoning` |
+| `xai-responses` | `xai`, Responses | `grok-4.20-0309-reasoning` |
+| `anthropic` | `anthropic` | `claude-haiku-4-5` |
+| `gemini` | `gemini` | `gemini-3.6-flash` |
+
+Each leg makes four calls, so a month costs a few cents. It never runs on
+push or on pull requests, so no PR's code can reach the keys. It reads the
+repository secrets `OPENAI_API_KEY`, `XAI_API_KEY`, `ANTHROPIC_API_KEY`
+and `GEMINI_API_KEY`. A leg whose secret isn't set is skipped with a
+notice, not failed; use keys with a low spend limit. When a leg fails, the
+workflow opens an issue labelled `live-canary`, or comments on the open
+one, naming the leg and the failing tests. Run a leg locally with
+`dev/ci/live-canary.sh <leg>` and its key in the environment.
