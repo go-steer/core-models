@@ -1,0 +1,8 @@
+{
+  "profile": "openai",
+  "dialect": "openai-responses",
+  "model": "gpt-5-mini",
+  "request_path": "/v1/responses",
+  "recorded": "2026-10-13",
+  "server": "OpenAI first-party Responses API, gpt-5-mini-2025-08-07 (reasoning). store:false with include reasoning.encrypted_content; the tool round trip replays the encrypted reasoning item (id + encrypted_content) before its function_call, and OpenAI accepts it. Reasoning counted inside output_tokens"
+}

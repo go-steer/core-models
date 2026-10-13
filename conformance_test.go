@@ -102,7 +102,17 @@ func TestConformance(t *testing.T) {
 						p.Models = []profile.Model{{ID: meta.Model, ExtraBody: meta.ExtraBody}}
 					}
 					prov, err := coremodels.Open(context.Background(), p, coremodels.Options{Resolve: profile.Options{
-						Getenv: func(k string) string { return map[string]string{"GOOGLE_CLOUD_PROJECT": "PROJECT"}[k] },
+						// Placeholder credentials: the recorder drops headers, so
+						// replay never checks them, but a first-party profile
+						// refuses to open without its key.
+						Getenv: func(k string) string {
+							return map[string]string{
+								"GOOGLE_CLOUD_PROJECT": "PROJECT",
+								"OPENAI_API_KEY":       "replay",
+								"XAI_API_KEY":          "replay",
+								"ANTHROPIC_API_KEY":    "replay",
+							}[k]
+						},
 						Auth: auth.Options{DetectGoogle: func(context.Context, []string) (auth.TokenSource, error) {
 							return staticToken("replay"), nil
 						}},

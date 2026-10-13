@@ -38,7 +38,8 @@ import (
 // wire shape. A nil count was not reported.
 type Usage struct {
 	Input, Output, Total *int64
-	// Reasoning is counted inside Output, as both dialects report it.
+	// Reasoning is usually counted inside Output (OpenAI); some servers
+	// (xAI) count it beside Output. MapUsage tells them apart by Total.
 	Reasoning *int64
 	// CacheRead and CacheWrite are subsets of Input.
 	CacheRead, CacheWrite *int64
@@ -76,7 +77,7 @@ func MapUsage(u *Usage, s Stamp, md map[string]any) (*genai.GenerateContentRespo
 			um.PromptTokenCount = Clamp32(*u.Input)
 		}
 		if u.Output != nil {
-			um.CandidatesTokenCount = Clamp32(*u.Output - reasoning)
+			um.CandidatesTokenCount = Clamp32(*u.Output - reasoningInOutput(u, reasoning))
 		}
 		switch {
 		case u.Total != nil:
@@ -98,6 +99,24 @@ func MapUsage(u *Usage, s Stamp, md map[string]any) (*genai.GenerateContentRespo
 	resp := &llm.Response{CustomMetadata: md}
 	usage.Attach(resp, d)
 	return um, resp.CustomMetadata
+}
+
+// reasoningInOutput is how much of the server's output count is
+// reasoning. OpenAI counts reasoning inside completion/output tokens
+// (prompt + output = total), so the visible answer is output minus
+// reasoning. xAI counts it beside them (prompt + output + reasoning =
+// total): there the output count is already the answer, and subtracting
+// reasoning again lost it — a reasoning reply billed as all thought and
+// no answer. The total says which convention the server follows; with
+// no total, OpenAI's, the documented one, is assumed.
+func reasoningInOutput(u *Usage, reasoning int64) int64 {
+	if reasoning == 0 || u.Total == nil || u.Input == nil || u.Output == nil {
+		return reasoning
+	}
+	if *u.Input+*u.Output+reasoning == *u.Total && *u.Input+*u.Output != *u.Total {
+		return 0
+	}
+	return reasoning
 }
 
 // Clamp32 narrows a count to genai's int32 fields, saturating rather

@@ -1,0 +1,8 @@
+{
+  "profile": "xai",
+  "dialect": "openai-chat",
+  "model": "grok-4.20-0309-reasoning",
+  "request_path": "/v1/chat/completions",
+  "recorded": "2026-10-13",
+  "server": "xAI first-party Chat Completions, grok-4.20-0309-reasoning. reasoning_content returned; usage counts reasoning_tokens BESIDE completion_tokens (prompt + completion + reasoning = total), unlike OpenAI; cached_tokens reported"
+}
