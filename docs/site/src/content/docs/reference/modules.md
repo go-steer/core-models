@@ -7,7 +7,7 @@ description: The Go modules core-models publishes, their import paths, how they 
 
 | Module | Import |
 |---|---|
-| Core | `github.com/go-steer/core-models` (the root package `coremodels`, plus `llm`, `usage`, `callctx`, `retry`, `auth`, `profile`, `toolwire`, `dialect/openaichat`, `dialect/gemini` and `dialect/gemini/vertexcache`) |
+| Core | `github.com/go-steer/core-models` (the root package `coremodels`, plus `llm`, `usage`, `callctx`, `retry`, `auth`, `profile`, `toolwire`, `kvmetrics`, `pricing`, `dialect/openaichat`, `dialect/openairesp`, `dialect/anthropic`, `dialect/gemini` and `dialect/gemini/vertexcache`) |
 | ADK v2 adapter | `github.com/go-steer/core-models/adkv2` |
 
 A consumer requires the core module and the adapter. The ADK v1 adapter,
