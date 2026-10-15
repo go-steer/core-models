@@ -13,8 +13,29 @@ Each phase names what it delivers and how it is judged done.
 | **L3** | KV-cache statistics from self-hosted servers; core-agent adopts L1–L3 | **done**: core-agent adopted provider profiles (core-agent #1294); [`kvmetrics`](/concepts/kv-cache-metrics/) samples vLLM (verified live on 0.31), SGLang and llama.cpp metrics endpoints; mast's `/usage` reports a fleet-level prefix-cache window per turn and per session, and its judged eval board per incident (mast #543), live against our vLLM at 85–95% hit rates |
 | **L4** | Anthropic adapter moves here, with the best of both products' versions | **done**: `dialect/anthropic` and the `anthropic` and `anthropic-vertex` profiles (v0.6.0); mast (mast #521) and core-agent (core-agent #1296) both run on it, with judged-eval and live parity against their previous adapters. Claude is recorded live on Anthropic's first-party API and on Vertex AI |
 | **L5** | Gemini adapter and Vertex context caching move here | **done**: `dialect/gemini`, `dialect/gemini/vertexcache` and the `gemini`, `vertex` and `vertex-express` profiles (v0.6.0–v0.6.3); mast and core-agent both run on it, with judged-eval and live parity, including web search and the Vertex context cache |
-| **L6** | One price catalog for both products | **library done, mast adopted**: [`pricing`](/concepts/pricing/) (v0.11.0) merges both products' catalogs, with backend-keyed built-in rows, long-context rates, a profile-declared layer and the regen tool. mast prices from it (mast #544), and its own introductory-rate check and reviewed pin bumps keep the safeguards. Still owed: core-agent adopting it |
+| **L6** | One price catalog for both products | **done**: [`pricing`](/concepts/pricing/) (v0.11.0) merges both products' catalogs, with backend-keyed built-in rows, long-context rates, a profile-declared layer and the regen tool. mast prices from it (mast #544), and its own introductory-rate check and reviewed pin bumps keep the safeguards. core-agent prices from it too (core-agent #1328) |
 | **Later** | Claude on Bedrock, Azure OpenAI, more built-in profiles | planned |
 
 The [design document](https://github.com/go-steer/core-models/blob/main/docs/design.md)
 has the exit criterion for each phase.
+
+## v1.0
+
+core-models is pre-1.0, so a minor release may break the API. The CHANGELOG
+says so under **API Change**. The road to v1.0 is tracked in the
+[v1.0 milestone](https://github.com/go-steer/core-models/milestone/1)
+([tracking issue](https://github.com/go-steer/core-models/issues/78)). The
+criteria are proposals for the maintainer to decide:
+
+1. A deliberate public API, with CI blocking unlabelled breaking changes. See
+   the [API surface](/reference/api-surface/) inventory.
+2. A decision on the genai/ADK type coupling in the `llm` contract.
+3. One typed error classification across every dialect.
+4. A versioning rule for price data and pricing behavior.
+5. Answers to the open questions that shape the API: tiers, price dimensions,
+   governance and retry posture.
+6. Optionally, a public conformance kit.
+7. A six-week stability soak, ending in the v1.0.0 tag.
+
+The P1 providers (Claude on Bedrock, Azure OpenAI, more built-in profiles) don't
+gate v1.0. They can land in v1.x.
