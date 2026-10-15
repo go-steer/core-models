@@ -26,8 +26,6 @@ version: 2
 
 updates:
   - package-ecosystem: gomod
-    # adkv1 is deprecated and gets no further releases (v0.6.6 was its
-    # last), so it is not scanned.
     directories:
       - /
       - /adkv2

@@ -8,17 +8,18 @@ description: The Go modules core-models publishes, their import paths, how they 
 | Module | Import |
 |---|---|
 | Core | `github.com/go-steer/core-models` (the root package `coremodels`, plus `llm`, `usage`, `callctx`, `retry`, `auth`, `profile`, `toolwire`, `dialect/openaichat`, `dialect/gemini` and `dialect/gemini/vertexcache`) |
-| ADK v1 adapter (**deprecated** since v0.6.6, its last release: both products moved to ADK v2) | `github.com/go-steer/core-models/adkv1` |
 | ADK v2 adapter | `github.com/go-steer/core-models/adkv2` |
 
-A consumer requires the core module and the adapter for its ADK major,
-never both adapters.
+A consumer requires the core module and the adapter. The ADK v1 adapter,
+`adkv1`, was deprecated in v0.6.6 (its last release) once both products
+moved to ADK v2, and has since been deleted; its tags stay fetchable from
+the module proxy.
 
 ## Tags
 
 Each module is tagged separately, Go's convention for nested modules:
 - `v0.x.y` for the core;
-- `adkv1/v0.x.y` and `adkv2/v0.x.y` for the adapters.
+- `adkv2/v0.x.y` for the adapter.
 
 core-models is pre-1.0 and its API may change between minor versions.
 

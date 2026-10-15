@@ -16,11 +16,11 @@
 # core-no-adk.sh — presubmit: the core module never imports ADK.
 #
 # Decision D2 (docs/design.md §2): the core depends on genai and
-# vendor SDKs only, and ADK enters through the adkv1/adkv2 modules.
+# vendor SDKs only, and ADK enters through the adkv2 module.
 # If any package of the core module reaches an ADK major — directly
 # or through a dependency — every consumer gets that major in its
-# build, and core-agent (ADK v1) and mast (ADK v2) cannot both import
-# the same core. go build would not notice; this does.
+# build, and a consumer on a different ADK major cannot import the
+# same core. go build would not notice; this does.
 #
 # These scripts are exactly what CI runs (.github/workflows/ci.yml); run
 # dev/ci/presubmits/all.sh locally before pushing.
@@ -32,7 +32,7 @@ deps="$(go list -deps -test ./...)"
 if adk="$(grep -E '^google\.golang\.org/adk(/|$)' <<<"${deps}")"; then
   echo "FAIL: the core module reaches ADK (D2):" >&2
   sed 's/^/  - /' <<<"${adk}" >&2
-  echo "Move the ADK-facing code into adkv1/ and adkv2/." >&2
+  echo "Move the ADK-facing code into adkv2/." >&2
   exit 1
 fi
 echo "core-no-adk: OK"

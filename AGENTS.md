@@ -28,7 +28,7 @@ OpenAI, the Vertex AI partner models, and self-hosted vLLM, SGLang and Ollama.
 [`docs/design.md`](./docs/design.md) is the design and records the settled
 decisions (§2). Read it before proposing a change of shape.
 
-**Status:** pre-release (v0.6.x). Both products run on the library:
+**Status:** pre-release (v0.13.x). Both products run on the library:
 
 - **L0** (contract, usage record, `callctx`/`retry`/`auth`/`profile`, the
   adapter modules, CI, docs site): done.
@@ -69,7 +69,7 @@ roadmap page tracks their status.
 | Repo | Relationship |
 |---|---|
 | [`go-steer/mast`](https://github.com/go-steer/mast) | Consumer, on ADK v2, through `adkv2`. Owns the provider requirements doc |
-| [`go-steer/core-agent`](https://github.com/go-steer/core-agent) | Consumer, on ADK v2, through `adkv2` (since core-agent #1291 and #1296). `adkv1` is deprecated |
+| [`go-steer/core-agent`](https://github.com/go-steer/core-agent) | Consumer, on ADK v2, through `adkv2` (since core-agent #1291 and #1296) |
 
 **Sync discipline.** Provider fixes land **here**: a core-models release,
 then a version bump in each product. Never patch a product's copy and port it
@@ -152,20 +152,19 @@ of scope, don't build it early without a consumer asking for it.
 
 This is decision D2. The core module (`llm/`, `usage/` and every future
 provider package) depends on genai and vendor SDKs only. ADK enters only
-through `adkv1/` and `adkv2/`. If the core reached an ADK major, every consumer
-would get that major, and mast (v2) and core-agent (v1) could not both import
-it. `dev/ci/presubmits/core-no-adk.sh` enforces this over the full dependency
+through the adapter module, `adkv2/`. If the core reached an ADK major, every
+consumer would get that major, and a consumer on a different major could not
+import it. `dev/ci/presubmits/core-no-adk.sh` enforces this over the full dependency
 graph, including tests.
 
-### 9. The two adapter modules stay in lockstep
+### 9. One adapter module per ADK major
 
-`adkv1` is deprecated (v0.6.6 was its last release) and will be deleted; until
-then it stays generated from `adkv2`, so the rule still holds. `adkv1` is
-`adkv2` with the import path changed, and nothing else. **Edit
-`adkv2`**, then run `dev/ci/presubmits/shims-lockstep.sh --fix` to regenerate
-`adkv1`. The presubmit fails on any other difference. Write comments in those
-files so they read correctly after the rewrite: say "ADK v2" in prose, never
-the package name of the other shim.
+`adkv2` is the only adapter module. `adkv1` was a generated copy of it for
+core-agent while core-agent was on ADK v1; once both products were on ADK v2 it
+was deprecated (v0.6.6 was its last release) and then deleted. Its tags stay
+fetchable from the module proxy. If a new ADK major arrives while a product is
+still on the old one, add a module for it beside `adkv2` rather than moving
+ADK into the core (rule #8).
 
 ### 10. Dependency floors are the consumers' floors
 
@@ -220,7 +219,6 @@ dialect/anthropic/   Anthropic Messages: first-party and Vertex AI; prompt cachi
 dialect/gemini/      Gemini: Developer API, Vertex AI and express mode; vertexcache/ for explicit caches
 deploy/gke-vllm/     kustomize fixtures for a self-hosted vLLM on GKE, plus psc.sh
 testdata/conformance/  recorded exchanges from real servers, replayed in presubmit
-adkv1/  (module)     adapter to google.golang.org/adk v1 — DEPRECATED, no users, no further releases
 adkv2/  (module)     adapter to google.golang.org/adk/v2 — mast and core-agent
 docs/design.md       the design; decisions in §2
 docs/site/           Astro + Starlight user docs
@@ -242,13 +240,12 @@ them, not before.
 dev/ci/presubmits/all.sh              # everything CI runs
 dev/ci/presubmits/test.sh             # go test -race in every module
 dev/ci/presubmits/lint.sh             # golangci-lint v2.12.1, the siblings' config
-dev/ci/presubmits/shims-lockstep.sh --fix   # after editing adkv2
 dev/tools/docs-site.sh check          # docs site build + link check (needs Node 22)
 ```
 
-The repo has three Go modules. `dev/tools/common.sh` lists them in
+The repo has two Go modules. `dev/tools/common.sh` lists them in
 `GO_MODULES`, and every Go presubmit iterates that list. A new nested module
-is one line there. The adapter modules build against the core in this repo
+is one line there. The adapter module builds against the core in this repo
 through a `replace ../` directive. Consumers ignore that directive, so it is
 safe to commit. Don't add a `go.work`; it is gitignored.
 
@@ -304,12 +301,10 @@ git -c user.email="<human's email>" -c user.name="<human's name>" commit -s -m "
 Each module is tagged separately (Go's nested-module convention), and the core
 always goes first:
 
-1. In `adkv2/go.mod` (and `adkv1/go.mod`, which the lockstep presubmit
-   keeps in step), bump the `github.com/go-steer/core-models` requirement to
-   `vX.Y.Z`, keep the `replace` directive, and move the CHANGELOG's
+1. In `adkv2/go.mod`, bump the `github.com/go-steer/core-models` requirement
+   to `vX.Y.Z`, keep the `replace` directive, and move the CHANGELOG's
    Unreleased entries under a `vX.Y.Z` heading. Merge that change.
-2. Tag the merge commit: the core `vX.Y.Z`, then `adkv2/vX.Y.Z`. `adkv1` is
-   deprecated and no longer tagged.
+2. Tag the merge commit: the core `vX.Y.Z`, then `adkv2/vX.Y.Z`.
 3. Open the bump PRs in mast and core-agent, or tell their owners.
 
 Pre-1.0, a minor version may break the API. Say so in the CHANGELOG under
@@ -320,7 +315,6 @@ Pre-1.0, a minor version may break the API. Say so in the CHANGELOG under
 - **Importing an ADK package from the core module "just for a type".** Mirror
   the type in `llm/` instead. The presubmit will catch it, but only after you've
   built on it.
-- **Editing `adkv1` by hand.** It gets overwritten by `--fix`. Edit `adkv2`.
 - **A count of `0` where the provider said nothing** (rule #11).
 - **Upgrading genai in the core module because Dependabot asked** (rule #10).
 - **Building a provider here that a design phase hasn't reached** (rule #7).

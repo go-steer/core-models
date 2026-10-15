@@ -14,14 +14,13 @@
 
 // Package llm is the contract every core-models provider adapter
 // implements. It mirrors ADK's model package field for field, so that
-// the adkv1 and adkv2 modules can adapt it to either ADK major with
+// an adapter module (adkv2 today) can adapt it to an ADK major with
 // plain copies — and it imports no ADK, so the core module never puts
 // an ADK major into a consumer's build.
 //
-// mast is on google.golang.org/adk/v2 and core-agent on
-// google.golang.org/adk v1. Their model.LLM interfaces are identical in
-// shape and distinct as Go types; this package is the third, neutral
-// spelling both can reach (docs/design.md §4, decision D2).
+// Each ADK major's model.LLM is identical in shape to the others and
+// distinct as a Go type; this package is the neutral spelling every
+// major can reach (docs/design.md §4, decision D2).
 package llm
 
 import (
