@@ -165,6 +165,7 @@ func TestRefresh_SkipsWhenCacheFresh(t *testing.T) {
 	pre := &UserFile{
 		Version: 1,
 		External: &ExternalSource{
+			Format:    ExternalFormat,
 			FetchedAt: time.Now().Add(-10 * time.Minute),
 			Source:    srv.URL,
 			Models:    map[string]ModelRates{"x": {InputPerMTok: 1, OutputPerMTok: 1}},
@@ -239,6 +240,7 @@ func TestRefresh_RespectsIfNoneMatch(t *testing.T) {
 	pre := &UserFile{
 		Version: 1,
 		External: &ExternalSource{
+			Format:    ExternalFormat,
 			FetchedAt: time.Now().Add(-48 * time.Hour),
 			Source:    srv.URL,
 			ETag:      wantETag,

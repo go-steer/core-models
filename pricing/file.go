@@ -79,11 +79,28 @@ type UserFile struct {
 // cache-validity logic (skip refresh if <24h, send If-None-Match on
 // revalidation).
 type ExternalSource struct {
+	// Format is the shape of Models: ExternalFormat for a section
+	// Refresh writes now, zero for one written before backend-qualified
+	// rows existed (v0.13.1 and earlier). See ExternalFormat.
+	Format    int                   `json:"format,omitempty"`
 	FetchedAt time.Time             `json:"fetched_at"`
 	Source    string                `json:"source"` // canonical URL the data was pulled from
 	ETag      string                `json:"etag,omitempty"`
 	Models    map[string]ModelRates `json:"models,omitempty"`
 }
+
+// ExternalFormat is the ExternalSource.Format Refresh writes. Format 2
+// adds the backend-qualified rows litellm.Qualify derives
+// ("anthropic-vertex/claude-…", "vertex/gemini-…", "vertex-maas/…")
+// beside LiteLLM's own keys.
+//
+// A section in an older format is handled twice over. Loading it derives
+// the qualified rows from the LiteLLM keys it already holds, so its bare
+// rows can't shadow the built-in table's qualified ones even offline.
+// And Refresh treats it as stale: it fetches in full, ignoring the
+// cadence and the cached ETag, because a 304 would otherwise keep the
+// old section until LiteLLM's file next changed upstream.
+const ExternalFormat = 2
 
 // ManualSection is the operator-curated section. Round-trips intact
 // across refreshes (the fetcher only rewrites External).
@@ -146,6 +163,9 @@ func loadUserFile(path string) (*UserFile, error) {
 	}
 	if uf.Version == 0 {
 		uf.Version = SchemaVersion
+	}
+	if uf.External != nil && uf.External.Format < ExternalFormat {
+		uf.External.Models = qualifyCached(uf.External.Models)
 	}
 	return &uf, nil
 }
