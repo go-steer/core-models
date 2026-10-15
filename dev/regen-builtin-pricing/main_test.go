@@ -923,19 +923,3 @@ func TestDiscoverPrefixOnly_LeavesBareModelsUnchanged(t *testing.T) {
 		t.Errorf("discovery added %v / %v to a catalog with no prefix-only model", bare, qualified)
 	}
 }
-
-func TestBareID(t *testing.T) {
-	t.Parallel()
-	for in, want := range map[string]string{
-		"gemini-9-argon":           "gemini-9-argon",
-		"claude-quill-7@20300101":  "claude-quill-7-20300101",
-		"claude-quill-7@default":   "claude-quill-7",
-		"gemini-1.0-pro@001":       "",
-		"claude-quill-7@2030-0101": "",
-	} {
-		got, ok := bareID(in)
-		if got != want || ok != (want != "") {
-			t.Errorf("bareID(%q) = %q, %v; want %q", in, got, ok, want)
-		}
-	}
-}

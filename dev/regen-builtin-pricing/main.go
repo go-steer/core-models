@@ -142,65 +142,11 @@ const defaultLiteLLMSource = "https://raw.githubusercontent.com/BerriAI/litellm/
 // nothing and makes the diff unreadable.
 var familyPrefixes = []string{"gemini-", "claude-"}
 
-// backends are the four (backend, family) pairs the built-in profiles
-// resolve to, paired with how LiteLLM spells the same pair.
-//
-// Backend is core-models' name for it — the built-in profile's backend
-// (profile.Profile.BackendName), which is what usage.Detail.Backend
-// reports and both products key prices on — and it is what gets emitted
-// as the "<backend>/<model>" key prefix. Using that vocabulary rather
-// than LiteLLM's keeps upstream's spelling
-// ("vertex_ai-anthropic_models") out of the key space, so a caller that
-// has resolved a backend can build the key without a translation table.
-//
-// Prefix is LiteLLM's key prefix for that backend; empty means the
-// backend's rates live under the unprefixed id. Note the asymmetry that
-// makes this worth writing down: LiteLLM's unprefixed claude-* keys are
-// ANTHROPIC first-party, while its unprefixed gemini-* keys are VERTEX.
-// The bare rows this generator has always emitted are therefore a
-// mixture of two backends, which is exactly the ambiguity the qualified
-// rows remove.
-//
-// Convention marks the backend whose rate a family's bare row carries:
-// Anthropic for claude-*, Vertex for gemini-*. Discover is where LiteLLM
-// lists a model of the family that has NO bare key at all, which happens:
-// gemini-4-argon arrived as gemini/gemini-4-argon and
-// vertex_ai/gemini-4-argon only. Empty means a model missing from the
-// bare table cannot turn up on that backend (Anthropic's first-party rows
-// ARE the bare table). See discoverPrefixOnly.
-var backends = []struct {
-	Backend, Prefix, Family, Discover string
-	Convention                        bool
-}{
-	{Backend: "anthropic", Prefix: "", Family: "claude-", Convention: true},
-	{Backend: "anthropic-vertex", Prefix: "vertex_ai/", Family: "claude-", Discover: "vertex_ai/"},
-	{Backend: "gemini", Prefix: "gemini/", Family: "gemini-", Discover: "gemini/"},
-	{Backend: "vertex", Prefix: "", Family: "gemini-", Discover: "vertex_ai/", Convention: true},
-}
-
-// profileBackends are backends reached through a core-models built-in
-// profile whose models have no bare row: an id like zai-org/glm-5.2-maas
-// or grok-4.7 names a model on one backend, so the (backend, model) row
-// is the only row, and the context-window table (keyed on bare ids)
-// does not apply.
-//
-// Backend is the profile's backend name, Prefix is LiteLLM's key prefix
-// (empty for OpenAI, whose rows are unprefixed), Provider narrows by
-// litellm_provider where the prefix cannot (OpenAI's unprefixed keys sit
-// beside every other vendor's), Suffix narrows to the profile's models,
-// and Slash requires a publisher-qualified id.
-var profileBackends = []struct {
-	Backend, Prefix, Provider, Suffix string
-	Slash                             bool
-}{
-	// Vertex AI's partner models (MaaS), served through the
-	// OpenAI-compatible endpoint: vertex_ai/<publisher>/<model>-maas.
-	{Backend: "vertex-maas", Prefix: "vertex_ai/", Suffix: "-maas", Slash: true},
-	// OpenAI first-party, through the openai-responses dialect (L2).
-	{Backend: "openai", Provider: "openai"},
-	// xAI, through the openai-chat dialect (or Responses, opted in).
-	{Backend: "xai", Prefix: "xai/", Provider: "xai"},
-}
+// The backend tables — which core-models backend each LiteLLM key prefix
+// means, and which backend a family's bare row carries by convention —
+// live in internal/litellm (Backends, ProfileBackends), shared with the
+// pricing package's Refresh so a refreshed table spells every
+// (backend, model) pair exactly as this one does.
 
 // nameExclusions drops models that pass every metadata check but are
 // not general-purpose chat agents. Each needs a name rule because
@@ -340,12 +286,7 @@ func main() {
 	// keeps diffs meaningful, and keeps --check stable within a day.
 	now := time.Now().UTC().Truncate(24 * time.Hour)
 
-	kept, rejected := selectModels(all, now)
-	found, foundQualified, foundRejected := discoverPrefixOnly(all, now)
-	kept = append(kept, found...)
-	sort.Slice(kept, func(i, j int) bool { return kept[i].Name < kept[j].Name })
-	rejected = append(rejected, foundRejected...)
-	sort.Slice(rejected, func(i, j int) bool { return rejected[i].Name < rejected[j].Name })
+	kept, qualified, rejected := generate(all, now)
 	if len(kept) == 0 {
 		die("no models satisfied eligible() — LiteLLM's schema has probably shifted; " +
 			"inspect --source and the field names on liteLLMEntry before assuming the catalog emptied")
@@ -362,13 +303,6 @@ func main() {
 			fmt.Fprintf(os.Stderr, "  %-44s %s\n", r.Name, r.Why)
 		}
 	}
-
-	qualified := qualifyByBackend(kept, all)
-	qualified = append(qualified, foundQualified...)
-	qualified = append(qualified, qualifyProfileBackends(all, now)...)
-	sort.Slice(qualified, func(i, j int) bool { return qualified[i].Name < qualified[j].Name })
-	kept = dedupeNames(kept)
-	qualified = dedupeNames(qualified)
 
 	src, err := render(kept, qualified, now, *source)
 	if err != nil {
@@ -390,6 +324,26 @@ func main() {
 	}
 	fmt.Fprintf(os.Stderr, "regen-builtin-pricing: wrote %d entries (+%d backend-qualified) to %s (UpdatedAt=%s)\n",
 		len(kept), len(qualified), *outPath, now.Format("2006-01-02"))
+}
+
+// generate selects the rows builtin.go carries from a parsed catalog:
+// the bare rows (each implying a context-window row), the
+// backend-qualified rows, and the in-family near-misses with why each
+// was turned down. All three come back sorted and deduplicated, so
+// regens are byte-identical given the same input.
+func generate(all map[string]liteLLMEntry, now time.Time) (kept, qualified []generatedEntry, rejected []rejection) {
+	kept, rejected = selectModels(all, now)
+	found, foundQualified, foundRejected := discoverPrefixOnly(all, now)
+	kept = append(kept, found...)
+	sort.Slice(kept, func(i, j int) bool { return kept[i].Name < kept[j].Name })
+	rejected = append(rejected, foundRejected...)
+	sort.Slice(rejected, func(i, j int) bool { return rejected[i].Name < rejected[j].Name })
+
+	qualified = qualifyByBackend(kept, all)
+	qualified = append(qualified, foundQualified...)
+	qualified = append(qualified, qualifyProfileBackends(all, now)...)
+	sort.Slice(qualified, func(i, j int) bool { return qualified[i].Name < qualified[j].Name })
+	return dedupeNames(kept), dedupeNames(qualified), rejected
 }
 
 // --- drift checking (--check) --------------------------------------
@@ -796,13 +750,10 @@ func eligibleProfile(e liteLLMEntry, today time.Time) (bool, string) {
 // eligible LiteLLM key under a profile backend's prefix (and provider).
 func qualifyProfileBackends(all map[string]liteLLMEntry, today time.Time) []generatedEntry {
 	var out []generatedEntry
-	for _, b := range profileBackends {
+	for _, b := range litellm.ProfileBackends {
 		for key, e := range all {
-			model, ok := strings.CutPrefix(key, b.Prefix)
-			if !ok || !strings.HasSuffix(model, b.Suffix) || b.Slash != strings.Contains(model, "/") {
-				continue
-			}
-			if b.Provider != "" && e.LiteLLMProvider != b.Provider {
+			model, ok := b.ModelOf(key, e.LiteLLMProvider)
+			if !ok {
 				continue
 			}
 			if excludedName(model) {
@@ -811,7 +762,7 @@ func qualifyProfileBackends(all map[string]liteLLMEntry, today time.Time) []gene
 			if ok, _ := eligibleProfile(e, today); !ok {
 				continue
 			}
-			out = append(out, ratesOf(b.Backend+"/"+model, e))
+			out = append(out, ratesOf(b.Name+"/"+model, e))
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
@@ -866,12 +817,12 @@ func selectModels(all map[string]liteLLMEntry, today time.Time) ([]generatedEntr
 func discoverPrefixOnly(all map[string]liteLLMEntry, today time.Time) (bare, qualified []generatedEntry, rejected []rejection) {
 	ids := map[string]bool{}
 	for key := range all {
-		for _, b := range backends {
+		for _, b := range litellm.Backends {
 			model, ok := strings.CutPrefix(key, b.Discover)
 			if b.Discover == "" || !ok || strings.Contains(model, "/") || !strings.HasPrefix(model, b.Family) {
 				continue
 			}
-			if id, ok := bareID(model); ok {
+			if id, ok := litellm.BareID(model); ok {
 				if _, hasBare := all[id]; !hasBare {
 					ids[id] = true
 				}
@@ -886,7 +837,7 @@ func discoverPrefixOnly(all map[string]liteLLMEntry, today time.Time) (bare, qua
 
 	for _, id := range sorted {
 		var convention *liteLLMEntry
-		for _, b := range backends {
+		for _, b := range litellm.Backends {
 			if b.Convention && strings.HasPrefix(id, b.Family) && b.Discover != "" {
 				if e, key, ok := findListed(all, b.Discover, id); ok {
 					if ok, _, why := eligible(id, e, today); !ok {
@@ -902,7 +853,7 @@ func discoverPrefixOnly(all map[string]liteLLMEntry, today time.Time) (bare, qua
 			bare = append(bare, ratesOf(id, *convention))
 			continue
 		}
-		for _, b := range backends {
+		for _, b := range litellm.Backends {
 			if b.Convention || b.Discover == "" || !strings.HasPrefix(id, b.Family) {
 				continue
 			}
@@ -914,28 +865,10 @@ func discoverPrefixOnly(all map[string]liteLLMEntry, today time.Time) (bare, qua
 				rejected = append(rejected, rejection{Name: key, Why: why})
 				continue
 			}
-			qualified = append(qualified, ratesOf(b.Backend+"/"+id, e))
+			qualified = append(qualified, ratesOf(b.Name+"/"+id, e))
 		}
 	}
 	return bare, qualified, rejected
-}
-
-// bareID turns a prefixed key's model part into the id the bare table
-// would use: Vertex's "<base>@<YYYYMMDD>" becomes "<base>-<YYYYMMDD>" and
-// "<base>@default" becomes "<base>" (the inverse of upstreamKeys). Any
-// other "@" suffix has no bare spelling, so it reports false.
-func bareID(model string) (string, bool) {
-	if base, ok := strings.CutSuffix(model, "@default"); ok {
-		return base, true
-	}
-	i := strings.LastIndex(model, "@")
-	if i < 0 {
-		return model, true
-	}
-	if isDateSuffix(model[i+1:]) {
-		return model[:i] + "-" + model[i+1:], true
-	}
-	return "", false
 }
 
 // findListed returns the first of id's spellings under prefix that
@@ -943,7 +876,7 @@ func bareID(model string) (string, bool) {
 // unlike findUpstream it does not screen costs, because the caller hands
 // the entry to eligible(), which does, and reports why.
 func findListed(all map[string]liteLLMEntry, prefix, id string) (liteLLMEntry, string, bool) {
-	for _, key := range upstreamKeys(prefix, id) {
+	for _, key := range litellm.UpstreamKeys(prefix, id) {
 		if e, ok := all[key]; ok {
 			return e, key, true
 		}
@@ -1011,7 +944,7 @@ func ratesOf(key string, e liteLLMEntry) generatedEntry {
 func qualifyByBackend(kept []generatedEntry, all map[string]liteLLMEntry) []generatedEntry {
 	var out []generatedEntry
 	for _, k := range kept {
-		for _, b := range backends {
+		for _, b := range litellm.Backends {
 			if !strings.HasPrefix(k.Name, b.Family) {
 				continue
 			}
@@ -1024,7 +957,7 @@ func qualifyByBackend(kept []generatedEntry, all map[string]liteLLMEntry) []gene
 			if !ok {
 				continue
 			}
-			out = append(out, ratesOf(b.Backend+"/"+k.Name, e))
+			out = append(out, ratesOf(b.Name+"/"+k.Name, e))
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
@@ -1038,7 +971,7 @@ func qualifyByBackend(kept []generatedEntry, all map[string]liteLLMEntry) []gene
 // (rather than emitting a zero row) keeps the fallback to the bare id,
 // which is a real rate.
 func findUpstream(all map[string]liteLLMEntry, prefix, id string) (liteLLMEntry, bool) {
-	for _, key := range upstreamKeys(prefix, id) {
+	for _, key := range litellm.UpstreamKeys(prefix, id) {
 		e, ok := all[key]
 		if !ok {
 			continue
@@ -1052,37 +985,6 @@ func findUpstream(all map[string]liteLLMEntry, prefix, id string) (liteLLMEntry,
 		return e, true
 	}
 	return liteLLMEntry{}, false
-}
-
-// upstreamKeys spells one model id the ways a backend's table might
-// carry it, most specific first.
-//
-// Vertex publishes a dated model as "<base>@<date>" where the
-// unprefixed Anthropic table spells it "<base>-<date>", and tags the
-// undated pointer "@default". Both forms have to be tried or every
-// dated id would miss and silently fall back to the bare row.
-func upstreamKeys(prefix, id string) []string {
-	if prefix == "" {
-		return []string{id}
-	}
-	keys := []string{prefix + id}
-	if i := strings.LastIndex(id, "-"); i > 0 && isDateSuffix(id[i+1:]) {
-		keys = append(keys, prefix+id[:i]+"@"+id[i+1:])
-	}
-	return append(keys, prefix+id+"@default")
-}
-
-// isDateSuffix reports whether s is a bare YYYYMMDD stamp.
-func isDateSuffix(s string) bool {
-	if len(s) != 8 {
-		return false
-	}
-	for _, r := range s {
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-	return true
 }
 
 // dedupeNames drops every entry after the first with the same Name from
@@ -1337,17 +1239,5 @@ func die(format string, args ...any) {
 	os.Exit(1)
 }
 
-// round6 truncates x to 6 decimal places. Undoes binary-repr noise
-// introduced when LiteLLM's per-token rates (like 0.0000001) are
-// multiplied by 1M and end up as 0.09999999999999999 instead of 0.1.
-// Six decimals = one-millionth-of-a-dollar per Mtok, way finer than
-// any real rate we care about.
-func round6(x float64) float64 {
-	const scale = 1_000_000.0
-	rounded := float64(int64(x*scale+0.5)) / scale
-	// Preserve exact zero (avoid returning -0 from the rounding above).
-	if rounded == 0 {
-		return 0
-	}
-	return rounded
-}
+// round6 is litellm.Round6, the rounding Refresh applies too.
+func round6(x float64) float64 { return litellm.Round6(x) }

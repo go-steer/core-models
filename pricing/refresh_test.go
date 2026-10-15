@@ -71,8 +71,11 @@ func TestRefresh_HappyPathWritesExternalSection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Refresh: %v", err)
 	}
-	if out.ModelCount != 2 {
-		t.Errorf("ModelCount = %d, want 2 (gemini + claude; image+embedding filtered, sample_spec dropped)", out.ModelCount)
+	// Two LiteLLM entries survive (image + embedding filtered,
+	// sample_spec dropped), and each gains its convention backend's
+	// qualified row: vertex/gemini-3.5-flash, anthropic/claude-opus-4-7.
+	if out.ModelCount != 4 {
+		t.Errorf("ModelCount = %d, want 4 (gemini + claude, plus their vertex/ and anthropic/ rows)", out.ModelCount)
 	}
 
 	uf, err := LoadUserFile(home)
@@ -344,8 +347,9 @@ func TestParseLiteLLMBody_FiltersAndConverts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseLiteLLMBody: %v", err)
 	}
-	if len(parsed) != 2 {
-		t.Fatalf("len = %d, want 2 (gemini + claude); got %v", len(parsed), keysOf(parsed))
+	// gemini + claude, each beside its convention backend's qualified row.
+	if len(parsed) != 4 {
+		t.Fatalf("len = %d, want 4 (gemini + claude, plus vertex/ and anthropic/ rows); got %v", len(parsed), keysOf(parsed))
 	}
 	got := parsed["gemini-3.5-flash"]
 	wantInput := 1.50
