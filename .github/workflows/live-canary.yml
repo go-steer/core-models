@@ -81,7 +81,7 @@ jobs:
             grep -E -- '^\s*--- FAIL: ' "${RUNNER_TEMP}/live.log" | sed -E 's/^\s*--- FAIL: ([^ ]+).*/  - `\1`/' || echo "  - (no test reached; see the run log)"
           } >"${RUNNER_TEMP}/report/${LEG}.md"
       - if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: canary-${{ matrix.leg }}
           path: ${{ runner.temp }}/report/
