@@ -94,7 +94,7 @@ type RefreshOutcome struct {
 	NetworkFailed bool          // true when the fetch itself failed; cache was preserved
 	NetworkError  error         // populated when NetworkFailed
 	StaleAge      time.Duration // age of the cache at decision time; zero for fresh writes
-	ModelCount    int           // number of models written to the external section (zero on Skipped/NotModified)
+	ModelCount    int           // number of rows written to the external section, backend-qualified rows included (zero on Skipped/NotModified)
 	FetchedAt     time.Time     // timestamp stored in the cache file (or pre-existing one for Skipped)
 }
 
@@ -287,6 +287,9 @@ type liteLLMEntry struct {
 	// 1-hour breakpoint. Feeds Rates.CacheCreation1hInputPerMTok.
 	CacheCreationInputTokenCostAbove1hr *float64 `json:"cache_creation_input_token_cost_above_1hr,omitempty"`
 	Mode                                string   `json:"mode,omitempty"`
+	// LiteLLMProvider tells OpenAI's unprefixed rows from every other
+	// vendor's, for litellm.Qualify's openai/ rows.
+	LiteLLMProvider string `json:"litellm_provider,omitempty"`
 }
 
 // parseLiteLLMBody decodes the LiteLLM JSON and maps it into our
@@ -297,13 +300,27 @@ type liteLLMEntry struct {
 //     we don't model yet — a later extension if it becomes a gap).
 //   - Convert per-token rates → per-million-token rates to match
 //     our internal Rates struct.
+//
+// Every usable entry is kept under LiteLLM's own key, and the rows
+// litellm.Qualify derives are added beside them: "<backend>/<model>" in
+// core-models' backend vocabulary (anthropic-vertex/claude-…,
+// vertex-maas/…, vertex/gemini-…), and a bare row for a Gemini model
+// LiteLLM lists only under a prefix. Those are the keys the built-in
+// table uses, and they matter because this layer outranks it: without
+// them a lookup for claude-sonnet-4-5 on anthropic-vertex found the
+// refreshed bare row — Anthropic first-party's rate — before the
+// built-in anthropic-vertex row, and lost Vertex's long-context tier.
+//
+// Unlike the generator, Refresh applies no agent-loop eligibility
+// screen: this layer prices whatever model a product actually calls, and
+// a real rate for an odd model beats reporting it unpriced.
 func parseLiteLLMBody(body []byte) (map[string]ModelRates, error) {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(body, &raw); err != nil {
 		return nil, fmt.Errorf("pricing refresh: parse litellm json: %w", err)
 	}
-	const million = 1_000_000.0
 	out := make(map[string]ModelRates, len(raw))
+	priced := make(map[string]string, len(raw)) // LiteLLM key → litellm_provider
 	for name, payload := range raw {
 		if name == "sample_spec" {
 			continue
@@ -329,33 +346,37 @@ func parseLiteLLMBody(body []byte) (map[string]ModelRates, error) {
 			continue
 		}
 		rates := ModelRates{
-			InputPerMTok:  *e.InputCostPerToken * million,
-			OutputPerMTok: *e.OutputCostPerToken * million,
+			InputPerMTok:  litellm.PerMTok(*e.InputCostPerToken),
+			OutputPerMTok: litellm.PerMTok(*e.OutputCostPerToken),
 		}
 		// Populate cache-read rate when LiteLLM provides it. Ignore
 		// zero values — some entries carry `cache_read_input_token_cost: 0`
 		// as a placeholder for "not supported" rather than free.
 		if e.CacheReadInputTokenCost != nil && *e.CacheReadInputTokenCost > 0 {
-			rates.CachedInputPerMTok = *e.CacheReadInputTokenCost * million
+			rates.CachedInputPerMTok = litellm.PerMTok(*e.CacheReadInputTokenCost)
 		}
 		// Same zero-means-unsupported treatment as the read rate.
 		if e.CacheCreationInputTokenCost != nil && *e.CacheCreationInputTokenCost > 0 {
-			rates.CacheCreationInputPerMTok = *e.CacheCreationInputTokenCost * million
+			rates.CacheCreationInputPerMTok = litellm.PerMTok(*e.CacheCreationInputTokenCost)
 		}
 		if e.CacheCreationInputTokenCostAbove1hr != nil && *e.CacheCreationInputTokenCostAbove1hr > 0 {
-			rates.CacheCreation1hInputPerMTok = *e.CacheCreationInputTokenCostAbove1hr * million
+			rates.CacheCreation1hInputPerMTok = litellm.PerMTok(*e.CacheCreationInputTokenCostAbove1hr)
 		}
 		if lc, ok := litellm.LongContextOf(payload); ok {
 			rates.LongContext = &LongContext{
 				ThresholdTokens:             lc.ThresholdTokens,
-				InputPerMTok:                lc.Input * million,
-				CachedInputPerMTok:          lc.CacheRead * million,
-				CacheCreationInputPerMTok:   lc.CacheCreation * million,
-				CacheCreation1hInputPerMTok: lc.CacheCreation1hr * million,
-				OutputPerMTok:               lc.Output * million,
+				InputPerMTok:                litellm.PerMTok(lc.Input),
+				CachedInputPerMTok:          litellm.PerMTok(lc.CacheRead),
+				CacheCreationInputPerMTok:   litellm.PerMTok(lc.CacheCreation),
+				CacheCreation1hInputPerMTok: litellm.PerMTok(lc.CacheCreation1hr),
+				OutputPerMTok:               litellm.PerMTok(lc.Output),
 			}
 		}
 		out[strings.ToLower(strings.TrimSpace(name))] = rates
+		priced[name] = e.LiteLLMProvider
+	}
+	for key, src := range litellm.Qualify(priced) {
+		out[key] = out[strings.ToLower(strings.TrimSpace(src))]
 	}
 	if len(out) == 0 {
 		return nil, errors.New("pricing refresh: litellm body contained zero usable entries")

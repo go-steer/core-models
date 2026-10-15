@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.13.2 (2026-10-15)
+
 ### Removed
 
 - **The `adkv1` module.** It was deprecated in v0.6.6, its last release, once
@@ -13,6 +15,25 @@
 - **A monthly live canary** (`.github/workflows/live-canary.yml`): the
   conformance scenarios against OpenAI, xAI, Anthropic and the Gemini API,
   opening a `live-canary` issue when a leg fails. Never runs on PRs.
+
+### Fixed
+
+- **A refreshed price layer hid backend-specific rates.** `Refresh` stored
+  LiteLLM's entries under LiteLLM's keys (`vertex_ai/claude-…`), not the
+  `<backend>/<model>` keys the built-in table and `LookupFor` use. The
+  refreshed layer outranks the built-in one, so a lookup on a backend fell
+  through to the refreshed bare row, which is another backend's rate. Claude
+  Sonnet 4.5 on `anthropic-vertex` at a 300K-token prompt cost $0.96 (the
+  first-party rate, no long-context tier) instead of $1.89. Every product
+  that runs the default daily Refresh was affected; the built-in table alone
+  was right. `Refresh` now adds the rows the generator would emit from the
+  same data (`anthropic-vertex/`, `vertex-maas/`, `vertex/`, `gemini/`,
+  `openai/`, `xai/`, and the bare row of a Gemini model listed only under a
+  prefix), from one mapping the two share in `internal/litellm`. A test holds
+  them together: given the same LiteLLM data, every generated row gets the
+  same rate from the refreshed layer. `RefreshOutcome.ModelCount` now counts
+  those rows too. Found by core-agent's price comparison for its move to the
+  shared catalog.
 
 ## v0.13.1 (2026-10-13)
 
