@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+## v0.13.3 (2026-10-15)
+
+### Fixed
+
+- **A price cache written before v0.13.2 kept hiding backend-specific
+  rates.** v0.13.2 made `Refresh` add `<backend>/<model>` rows, but an
+  `external` section written by an earlier version has only LiteLLM's keys,
+  and `Refresh` revalidated it with its cached ETag. LiteLLM answers 304 until
+  its file changes upstream, so the old section stayed, and even a forced
+  refresh couldn't replace it: Claude Sonnet 4.5 on `anthropic-vertex` at
+  300K tokens still read $0.96 instead of $1.89. The section now records a
+  `format`. An older one gets its qualified rows derived from its LiteLLM keys
+  on load, so it prices right with no network, and `Refresh` treats it as
+  stale and fetches in full, ignoring its age and ETag. A forced refresh
+  (negative `MinInterval`) never sends `If-None-Match`. Operators need do
+  nothing; no need to delete the external section. Found by core-agent's
+  review of its v0.13.2 bump.
+
 ## v0.13.2 (2026-10-15)
 
 ### Removed

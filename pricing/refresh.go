@@ -146,9 +146,15 @@ func Refresh(ctx context.Context, userHome string, opts RefreshOptions) (Refresh
 	var existingETag string
 	var existingFetchedAt time.Time
 	if existing.External != nil {
-		existingETag = existing.External.ETag
 		existingFetchedAt = existing.External.FetchedAt
-		if opts.MinInterval > 0 && !existingFetchedAt.IsZero() {
+		// A forced refresh really fetches, and a section in an older
+		// format is stale whatever its age: a 304 against either would
+		// keep rows the caller is trying to replace (ExternalFormat).
+		current := existing.External.Format >= ExternalFormat
+		if current && opts.MinInterval > 0 {
+			existingETag = existing.External.ETag
+		}
+		if current && opts.MinInterval > 0 && !existingFetchedAt.IsZero() {
 			age := now.Sub(existingFetchedAt)
 			if age < opts.MinInterval {
 				return RefreshOutcome{
@@ -247,6 +253,7 @@ func Refresh(ctx context.Context, userHome string, opts RefreshOptions) (Refresh
 	// Write the new external section atomically; the manual section
 	// (if any) round-trips intact.
 	existing.External = &ExternalSource{
+		Format:    ExternalFormat,
 		FetchedAt: now,
 		Source:    opts.Source,
 		ETag:      resp.Header.Get("ETag"),
@@ -382,6 +389,30 @@ func parseLiteLLMBody(body []byte) (map[string]ModelRates, error) {
 		return nil, errors.New("pricing refresh: litellm body contained zero usable entries")
 	}
 	return out, nil
+}
+
+// qualifyCached adds the backend-qualified rows to an external section
+// written before they existed (ExternalFormat). Such a section kept
+// LiteLLM's keys verbatim, so litellm.Qualify can derive the rows from
+// the keys alone. What it can't see is litellm_provider, which only the
+// openai/ rows need; their bare rows carry the same rates, so nothing is
+// mispriced without them.
+func qualifyCached(models map[string]ModelRates) map[string]ModelRates {
+	if len(models) == 0 {
+		return models
+	}
+	keys := make(map[string]string, len(models))
+	for k := range models {
+		keys[k] = ""
+	}
+	out := make(map[string]ModelRates, len(models))
+	for k, r := range models {
+		out[k] = r
+	}
+	for key, src := range litellm.Qualify(keys) {
+		out[key] = models[src]
+	}
+	return out
 }
 
 // isTextMode reports whether the LiteLLM mode tag indicates a
