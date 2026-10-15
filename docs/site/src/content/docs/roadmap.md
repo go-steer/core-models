@@ -7,7 +7,7 @@ Each phase names what it delivers and how it is judged done.
 
 | Phase | Delivers | Status |
 |---|---|---|
-| **L0** | Repository, CI, the `llm` contract, the `usage` record, the `adkv1` and `adkv2` adapter modules | **done**. `adkv1` is deprecated since v0.6.6: both products are on ADK v2 and `adkv2` |
+| **L0** | Repository, CI, the `llm` contract, the `usage` record, the `adkv1` and `adkv2` adapter modules | **done**. `adkv1` was deprecated in v0.6.6 and later deleted: both products are on ADK v2 and `adkv2` |
 | **L1** | OpenAI Chat Completions, serving the built-in profiles for Vertex AI partner models, vLLM, SGLang, Ollama and any OpenAI-compatible endpoint; mast adopts it | **done**: the adapter, `coremodels.Open` and a recorded corpus (v0.1.0); mast adopted it (mast #510); GLM 5.2 holds tool-calling parity with Claude on mast's judged corpus over three runs; vLLM on GKE runs end to end (`deploy/gke-vllm`). See [tested models](/reference/tested-models/) |
 | **L2** | OpenAI Responses; OpenAI and xAI profiles | **done**: `dialect/openairesp` and the `openai` and `xai` profiles. Recorded live from OpenAI (`gpt-5-mini`, including the encrypted-reasoning round trip) and xAI (`grok-4.20-0309-reasoning` over Chat Completions and Responses), plus Gemma 4 on our vLLM's `/v1/responses` |
 | **L3** | KV-cache statistics from self-hosted servers; core-agent adopts L1–L3 | **done**: core-agent adopted provider profiles (core-agent #1294); [`kvmetrics`](/concepts/kv-cache-metrics/) samples vLLM (verified live on 0.31), SGLang and llama.cpp metrics endpoints; mast's `/usage` reports a fleet-level prefix-cache window per turn and per session, and its judged eval board per incident (mast #543), live against our vLLM at 85–95% hit rates |

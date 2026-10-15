@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Removed
+
+- **The `adkv1` module.** It was deprecated in v0.6.6, its last release, once
+  both products moved to ADK v2. Its tags, up to `adkv1/v0.6.6`, stay
+  fetchable from the module proxy. `adkv2` is the only adapter module.
+
 ### Added
 
 - **A monthly live canary** (`.github/workflows/live-canary.yml`): the

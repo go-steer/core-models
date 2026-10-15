@@ -13,11 +13,8 @@
 // limitations under the License.
 
 // Package adkv2 adapts core-models to the ADK major its import path
-// names. mast and core-agent are both on ADK v2; adkv1, for ADK v1, is
-// deprecated and receives no further releases. There is one adapter
-// package per major, and they are the same file with the
-// import path changed — dev/ci/presubmits/shims-lockstep.sh holds them
-// to that, so edit this one and regenerate the other with --fix.
+// names. mast and core-agent are both on ADK v2, and this is the only
+// adapter module; a future ADK major gets its own module beside it.
 //
 // Every conversion is a field copy: llm.Request and llm.Response mirror
 // ADK's types, and this module's tests fail the day ADK adds a field

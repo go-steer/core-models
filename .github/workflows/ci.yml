@@ -20,7 +20,7 @@
 # mast's and core-agent's ci.yml.
 #
 # Every Go script iterates the modules listed in dev/tools/common.sh
-# (the core module, adkv1, adkv2), so a new nested module needs no
+# (the core module, adkv2), so a new nested module needs no
 # change here.
 name: ci
 
@@ -91,7 +91,5 @@ jobs:
         run: dev/ci/presubmits/vuln.sh
       - name: core module imports no ADK
         run: dev/ci/presubmits/core-no-adk.sh
-      - name: adkv1 and adkv2 in lockstep
-        run: dev/ci/presubmits/shims-lockstep.sh
       - name: shell-lint
         run: dev/ci/presubmits/shell-lint.sh

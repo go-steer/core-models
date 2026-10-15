@@ -2,7 +2,7 @@
 
 **Status:** design, 2026-10-08; L0–L1 and L3'–L5 built by 2026-10-12, with
 mast (#510, #521) and core-agent (#1294, #1296) running on the library, and
-`adkv1` deprecated since v0.6.6. The decisions in [§2](#2-settled-decisions) were
+`adkv1` deprecated in v0.6.6 and since deleted. The decisions in [§2](#2-settled-decisions) were
 settled with the maintainer on 2026-10-08. Everything else is the proposed shape,
 and it changes as the open questions in [§13](#13-open-questions) are answered.
 
@@ -57,7 +57,7 @@ import it. Product policy stays in each product.
 | # | Decision | Rationale |
 |---|---|---|
 | D1 | **Repo `github.com/go-steer/core-models`** | Matches the `core-agent` / `core-tui` family and is neutral to both consumers. |
-| D2 | **The core module depends on genai and vendor SDKs only, never ADK. Two nested shim modules, `adkv1` and `adkv2`, adapt it to each ADK major.** | mast is on `adk/v2` and core-agent is on `adk` v1.7. Their `model.LLM`, `LLMRequest` and `LLMResponse` are identical in fields but are distinct Go types. The shims are field copies. The `adkv1` shim is deleted whenever core-agent moves to ADK v2; that migration is a separate track and does not block this work. *core-agent moved to ADK v2 (core-agent #1291) and to `adkv2` (#1296); `adkv1` is deprecated in v0.6.6, its last release, and the directory goes in a later cleanup.* |
+| D2 | **The core module depends on genai and vendor SDKs only, never ADK. Two nested shim modules, `adkv1` and `adkv2`, adapt it to each ADK major.** | mast is on `adk/v2` and core-agent is on `adk` v1.7. Their `model.LLM`, `LLMRequest` and `LLMResponse` are identical in fields but are distinct Go types. The shims are field copies. The `adkv1` shim is deleted whenever core-agent moves to ADK v2; that migration is a separate track and does not block this work. *core-agent moved to ADK v2 (core-agent #1291) and to `adkv2` (#1296); `adkv1` was deprecated in v0.6.6, its last release, and the directory has since been deleted. The decision stands: a future ADK major gets its own shim beside `adkv2`.* |
 | D3 | **Pricing moves into the library, in a later phase (L6)** | The two catalogs diverged in opposite directions: mast keys rates by (backend, model), and core-agent has the 1-hour cache-write rate. They are merged once, after the adapters land. Until then each repo prices new providers through its own catalog's override layer. |
 | D4 | **New providers first, then extract the existing ones** | New providers are the requirement. The contract is still designed against the existing Gemini and Anthropic adapters ([§4](#4-the-contract)), so extracting them later is a move, not a redesign. |
 | D5 | **The library does not use ADK's `model/openaimodel`** *(amended in L1 and L2: both OpenAI dialects are written on net/http and their own wire types, not openai-go; see §7.1 and §7.2)* | It now speaks both Responses and Chat Completions, but it exists only in ADK v2, so core-agent cannot use it (D2). The plan was to write the OpenAI dialects on `openai-go/v3` directly. In the event neither uses it: pointer-typed wire structs keep an unreported count distinct from zero, servers add and omit fields an SDK's types fight, and no module enters the graph. |
@@ -82,14 +82,15 @@ github.com/go-steer/core-models              # core module: genai + vendor SDKs,
   pricing/        Rates, catalog, LiteLLM regen keyed by (backend, model)  (L6)
   toolwire/       Wire + Verify invariant (from mast internal/toolcatalog/verify.go)
   conformance/    per-dialect recorded-turn corpus + replay harness
-  adkv1/  (go.mod) google.golang.org/adk  v1.x  — Wrap(llm.LLM) model.LLM, grounding projection
-  adkv2/  (go.mod) google.golang.org/adk/v2     — same
+  adkv2/  (go.mod) google.golang.org/adk/v2     — Wrap(llm.LLM) model.LLM, grounding projection
 ```
 
 **Nested modules, not subpackages.** If the core `go.mod` required both ADK
 majors, both would land in every consumer's module graph. With nested modules,
-mast requires `core-models` + `core-models/adkv2`, and core-agent requires
-`core-models` + `core-models/adkv1`. Tags are per module (`v0.1.0`,
+mast and core-agent each require `core-models` + `core-models/adkv2`. (Until
+core-agent moved to ADK v2, it required an `adkv1` module, a generated copy of
+`adkv2`; that module is deleted, and its tags stay on the module proxy.) Tags
+are per module (`v0.1.0`,
 `adkv2/v0.1.0`). Local development across the three repos uses `go.work`.
 
 ### 3.1 Prior art: why not fantasy
@@ -769,8 +770,9 @@ out at that point.
   It needs an answer before L6.
 - **Q4. First real self-hosted target** (mast OQ-6). This design assumes vLLM;
   if the first deployment is SGLang, the corpus's validation weights follow it.
-- **Q5. When core-agent moves to ADK v2.** It is not required, but it deletes
-  `adkv1` and lets the library reconsider wrapping ADK's Gemini model.
+- **Q5. When core-agent moves to ADK v2.** *Answered: core-agent moved
+  (core-agent #1291, #1296), and `adkv1` is deleted. Reconsidering whether the
+  library wraps ADK's Gemini model is still open.*
 - **Q6. Release cadence and governance:** the repo is public like its siblings.
   CODEOWNERS and the release cadence relative to the two products are still
   open.

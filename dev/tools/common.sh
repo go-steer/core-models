@@ -26,7 +26,7 @@ repo_root() {
 # core module first; then one shim per ADK major (docs/design.md §3).
 # A new nested module is added here and nowhere else — every Go
 # presubmit iterates this list.
-GO_MODULES=(. adkv1 adkv2)
+GO_MODULES=(. adkv2)
 
 # each_module <cmd...> — run cmd in every module, all of them even when
 # one fails, and fail at the end naming the ones that did.

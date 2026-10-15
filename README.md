@@ -10,7 +10,7 @@ One LLM provider layer for Go agents built on Google's
   and self-hosted model servers (vLLM, SGLang, Ollama);
 - one usage record every adapter fills in, so tokens and cost look the same
   whichever model answered;
-- thin adapter modules for ADK v1 and ADK v2.
+- a thin adapter module for ADK v2.
 
 **Status: pre-release (v0.x), in use.** mast and core-agent both run on it.
 Four wire formats ("dialects") are built:
@@ -35,7 +35,6 @@ is still owed.
 | Module | For |
 |---|---|
 | `github.com/go-steer/core-models` | The contract (`llm`), the usage record (`usage`), profiles, the dialects above, the KV-cache sampler (`kvmetrics`) and the shared price catalog (`pricing`). Never imports ADK |
-| `github.com/go-steer/core-models/adkv1` | Projects on `google.golang.org/adk` v1. **Deprecated** since v0.6.6, its last release; move to ADK v2 and `adkv2` |
 | `github.com/go-steer/core-models/adkv2` | Projects on `google.golang.org/adk/v2` |
 
 ## License

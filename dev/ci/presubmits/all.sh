@@ -28,7 +28,7 @@
 set -euo pipefail
 
 dir="$(cd "$(dirname "$0")" && pwd)"
-steps=(build vet fmt lint mod-tidy test vuln core-no-adk shims-lockstep shell-lint attribution)
+steps=(build vet fmt lint mod-tidy test vuln core-no-adk shell-lint attribution)
 failed=()
 
 for step in "${steps[@]}"; do
