@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+## v0.13.4 (2026-10-19)
+
+### Fixed
+
+- **A model with no explicit caching no longer runs the cache retry
+  schedule.** Vertex AI answers a `Caches.Create` for `gemini-4-argon` with
+  `400 INVALID_ARGUMENT: Model ... does not support explicit context
+  caching`. `vertexcache.Manager` treated it as a failure time could fix:
+  six doomed creates over about eight minutes, each logged as something to
+  act on. The new `vertexcache.IsCachingUnsupported` verdict stops on the
+  first one with a single log line, as `IsBelowCacheMinimum` already does.
+  Argon's implicit cache is unaffected: its hits are reported as cached
+  tokens and billed at the cached-input rate.
+
 ### Changed
 
 - **The live canary covers Gemini 4 Argon.** The `gemini` leg moves to

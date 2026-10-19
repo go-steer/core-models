@@ -52,6 +52,22 @@ request, and takes core-agent's prompt caching:
 Claude on Vertex AI uses core-models' own Google credentials rather than
 the SDK's Vertex package, so the library takes no OAuth2 dependency.
 
+## Gemini: implicit and explicit caches
+
+Gemini discounts a repeated prompt prefix two ways. **Implicit caching**
+needs nothing from the caller: the response reports the hit as
+`CachedContentTokenCount`, `usage.Detail.CacheReadTokens` carries it, and
+the price catalog bills it at the cached-input rate. **Explicit caching**
+(`dialect/gemini/vertexcache`) creates a named cache of the system
+instruction and tools on Vertex AI and refreshes it before its TTL runs out.
+
+Not every model takes an explicit cache. Gemini 4 Argon answers a cache
+create with `does not support explicit context caching`; the manager reads
+that with `vertexcache.IsCachingUnsupported`, logs it once and runs
+uncached, without the retry schedule it keeps for failures time can fix.
+Argon's implicit cache still works: a live call with a repeated 9,619-token
+prompt read 7,565 tokens from it and cost $0.0050 instead of $0.0194.
+
 ## Profiles instead of model-name prefixes
 
 Today a model name's prefix (`gemini-`, `claude-`) picks the vendor. That

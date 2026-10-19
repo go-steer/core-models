@@ -464,7 +464,9 @@ The base is mast's API shape: option structs, no registry, and the
     (this closes the mast finding in [§12](#12-findings-from-the-inventory));
   - the transient classification and bare-400 retry (#1247), which feed the
     shared `retry` package rather than a third policy.
-- **vertexcache:** `IsBelowCacheMinimum` (#1067).
+- **vertexcache:** `IsBelowCacheMinimum` (#1067). `IsCachingUnsupported`
+  followed (v0.13.4), for a model that takes no explicit cache at all
+  (Gemini 4 Argon).
 - **Both adapters:**
   - the positional schema normalizer (#532), which avoids mast's generic walk
     rewriting instance data;
