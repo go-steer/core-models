@@ -281,6 +281,15 @@ func (m *Manager) doInit(ctx context.Context, systemInstruction *genai.Content, 
 			m.opts.logger().Printf("vertexcache: context cache: disabled for model %s — the system instruction + tools are below the provider's minimum cacheable size, and retrying cannot change that. Nothing to fix; a larger prompt would qualify: %v", m.model, err)
 			return
 		}
+		// The model itself takes no explicit cache (Gemini 4 Argon is
+		// one): no retry can change the model, so stop the same way.
+		if IsCachingUnsupported(err) {
+			m.mu.Lock()
+			m.state = stateFailed
+			m.mu.Unlock()
+			m.opts.logger().Printf("vertexcache: context cache: disabled for model %s — the model does not support explicit context caching, and retrying cannot change that. Nothing to fix; it runs uncached, which implicit caching may still discount: %v", m.model, err)
+			return
+		}
 		// Everything else gets a bounded retry. The old code treated
 		// this whole class as permanent, so an IAM-propagation 403 —
 		// the config was right, the binding just hadn't landed yet —

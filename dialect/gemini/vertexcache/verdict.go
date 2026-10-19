@@ -77,3 +77,25 @@ func IsBelowCacheMinimum(err error) bool {
 	return strings.Contains(s, "INVALID_ARGUMENT") &&
 		strings.Contains(strings.ToLower(s), "minimum token count")
 }
+
+// IsCachingUnsupported reports whether err says the model cannot hold
+// an explicit context cache at all:
+//
+//	Error 400, Message: Model `gemini-4-argon` does not support explicit
+//	context caching., Status: INVALID_ARGUMENT
+//
+// Like IsBelowCacheMinimum it is a Create failure time cannot fix — the
+// model is fixed for the manager's life — so the manager stops instead
+// of running its retry schedule. Such a model may still discount a
+// repeated prefix through implicit caching, which needs no handle and
+// reports its hits as cached tokens on the response. It matches the
+// reason, never the model name, and pairs it with INVALID_ARGUMENT for
+// the same reason IsBelowCacheMinimum does.
+func IsCachingUnsupported(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	return strings.Contains(s, "INVALID_ARGUMENT") &&
+		strings.Contains(strings.ToLower(s), "does not support explicit context caching")
+}
