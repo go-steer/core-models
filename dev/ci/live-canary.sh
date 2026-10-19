@@ -39,7 +39,8 @@ case "$leg" in
   xai-chat)         profile=xai;       model=grok-4.20-0309-reasoning; key=XAI_API_KEY ;;
   xai-responses)    profile=xai;       model=grok-4.20-0309-reasoning; key=XAI_API_KEY;       dialect=openai-responses ;;
   anthropic)        profile=anthropic; model=claude-haiku-4-5;         key=ANTHROPIC_API_KEY ;;
-  gemini)           profile=gemini;    model=gemini-3.6-flash;         key=GEMINI_API_KEY ;;
+  gemini)           profile=gemini;    model=gemini-3.8-flash;         key=GEMINI_API_KEY ;;
+  gemini-argon)     profile=gemini;    model=gemini-4-argon;           key=GEMINI_API_KEY ;;
   *) echo "live-canary.sh: unknown leg ${leg}" >&2; exit 2 ;;
 esac
 

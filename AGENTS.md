@@ -273,7 +273,8 @@ Tests run offline and need no credentials.
 - **Live canary** (`.github/workflows/live-canary.yml`, monthly and on
   demand, never on push or PRs) runs the same scenarios through
   `dev/ci/live-canary.sh <leg>` against OpenAI (Chat Completions and
-  Responses), xAI (both), Anthropic and the Gemini API: four calls a leg,
+  Responses), xAI (both), Anthropic and the Gemini API (Gemini 3.8 Flash
+  and Gemini 4 Argon): four calls a leg,
   cents a month. It reads the repository secrets `OPENAI_API_KEY`,
   `XAI_API_KEY`, `ANTHROPIC_API_KEY` and `GEMINI_API_KEY`; a leg whose
   secret is unset is skipped with a notice. A failure opens or comments on

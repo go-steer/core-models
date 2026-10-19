@@ -213,7 +213,8 @@ live, one leg per provider and dialect:
 | `xai-chat` | `xai` | `grok-4.20-0309-reasoning` |
 | `xai-responses` | `xai`, Responses | `grok-4.20-0309-reasoning` |
 | `anthropic` | `anthropic` | `claude-haiku-4-5` |
-| `gemini` | `gemini` | `gemini-3.6-flash` |
+| `gemini` | `gemini` | `gemini-3.8-flash` |
+| `gemini-argon` | `gemini` | `gemini-4-argon` |
 
 Each leg makes four calls, so a month costs a few cents. It never runs on
 push or on pull requests, so no PR's code can reach the keys. It reads the
