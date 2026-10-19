@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Changed
+
+- **The live canary covers Gemini 4 Argon.** The `gemini` leg moves to
+  `gemini-3.8-flash`, and a `gemini-argon` leg runs the same scenarios on
+  `gemini-4-argon` through the Gemini API.
+
 ## v0.13.3 (2026-10-15)
 
 ### Fixed
