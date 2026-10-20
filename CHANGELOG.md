@@ -22,6 +22,22 @@
   budget.
 - **`kvmetrics` sends an OAuth2 token only over https**, as it already
   did a Google ADC token.
+- **Profile `headers`** (#82). A profile can add headers to every request
+  to the model endpoint, for a gateway that needs one that isn't the
+  credential: SAP AI Core's `AI-Resource-Group`, an API-management
+  subscription key, a tenant header, an `anthropic-beta` opt-in. Values
+  expand `${VAR}` and `${VAR:-default}` at Resolve, and one that comes out
+  empty isn't sent. `Open` sends them in every dialect on every attempt,
+  never to another host a redirect points to, and a value the request
+  already carries wins; a host that builds a dialect itself wraps its
+  `HTTPClient` with `Resolved.HeaderTransport`. `extends` merges them key
+  by key, case-insensitively, and an empty value drops an inherited one.
+  Credentials (`Authorization`, `x-api-key`, `api-key`, `x-goog-api-key`,
+  `x-goog-user-project`), hop-by-hop headers and the headers the dialects
+  set themselves are refused. `kvmetrics` forwards them only to a metrics
+  endpoint on the API's own origin. A value read from the environment
+  never appears in an error or a printed `Resolved`;
+  `Resolved.HeaderNames` lists the names.
 
 ### Fixed
 

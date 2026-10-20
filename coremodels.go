@@ -85,6 +85,7 @@ func Open(ctx context.Context, p profile.Profile, opts Options) (Provider, error
 	if err != nil {
 		return nil, err
 	}
+	opts.HTTPClient = withProfileHeaders(r, opts.HTTPClient)
 	rp := r.Profile
 	switch rp.Dialect {
 	case profile.OpenAIChat:
@@ -148,6 +149,24 @@ func Open(ctx context.Context, p profile.Profile, opts Options) (Provider, error
 		}}, nil
 	}
 	return nil, fmt.Errorf("profile %q: unknown dialect %q", rp.Name, rp.Dialect)
+}
+
+// withProfileHeaders returns hc with the profile's headers set on every
+// request, as the base transport each dialect builds its credential and
+// retry layers over, so every attempt carries them. hc itself when the
+// profile has none; a nil hc stands for the zero client every dialect
+// defaults to.
+func withProfileHeaders(r *profile.Resolved, hc *http.Client) *http.Client {
+	if len(r.HeaderNames()) == 0 {
+		return hc
+	}
+	c := &http.Client{}
+	if hc != nil {
+		cp := *hc
+		c = &cp
+	}
+	c.Transport = r.HeaderTransport(c.Transport)
+	return c
 }
 
 type provider struct {

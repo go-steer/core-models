@@ -80,7 +80,9 @@ type Options struct {
 
 	// HTTPClient supplies the base transport, for tracing or a proxy;
 	// the retry and auth layers wrap it. Nil means
-	// http.DefaultTransport.
+	// http.DefaultTransport. coremodels.Open puts a profile's headers in
+	// it (profile.Resolved.HeaderTransport); a host building the Client
+	// itself, to share it with a context cache, does the same.
 	HTTPClient *http.Client
 	// Retry is the HTTP-layer retry policy. Nil means retry.Default().
 	// Either way, a nil AfterSuccess gets the bare-400 rule

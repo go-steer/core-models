@@ -250,6 +250,16 @@ tiers: {mid: Qwen/Qwen3-Coder-Next}
   `golang.org/x/oauth2`, which is not in the core's dependency graph
   (rule #10). The `gemini` dialect refuses it; the OpenAI dialects and
   `anthropic` send the token as a bearer.
+- `headers:` (#82) adds non-credential headers to every model request, for a
+  gateway that needs one (SAP AI Core's `AI-Resource-Group`, an API-management
+  subscription key). Values expand like `params`; an empty one is not sent.
+  Credentials and the headers dialects set are refused, so auth stays in
+  `auth`. `Open` puts them under each dialect's credential and retry layers,
+  so every attempt carries them; a redirect to another host gets none, and a
+  value the request already carries wins. A host building a dialect itself
+  wraps its client with `Resolved.HeaderTransport`. `kvmetrics` forwards them
+  only to a same-origin `metrics_url`. Values read from the environment are
+  reachable only through `HeaderTransport`, so they never print.
 
 `Open` (profile to `Provider`) lands with the first dialect in L1. Until
 then, `Resolve` is the construction-time check.

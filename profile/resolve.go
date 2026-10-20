@@ -279,6 +279,7 @@ func (p Profile) clone() Profile {
 	c.Models = slices.Clone(p.Models)
 	c.Tiers = maps.Clone(p.Tiers)
 	c.ExtraBody = maps.Clone(p.ExtraBody)
+	c.Headers = maps.Clone(p.Headers)
 	if p.Auth.Scopes != nil {
 		c.Auth.Scopes = slices.Clone(p.Auth.Scopes)
 	}
@@ -289,8 +290,10 @@ func (p Profile) clone() Profile {
 }
 
 // Expand applies Extends: the result is the named built-in with every
-// field p sets laid over it. Params and Tiers merge key by key; Models
-// and Auth replace as a whole; each capability overrides on its own.
+// field p sets laid over it. Params, Headers and Tiers merge key by
+// key (Headers case-insensitively, so p's spelling of a name replaces
+// the built-in's, and an empty value drops it); Models and Auth replace
+// as a whole; each capability overrides on its own.
 // A profile without Extends is returned unchanged.
 func Expand(p Profile) (Profile, error) {
 	if p.Extends == "" {
@@ -326,6 +329,19 @@ func Expand(p Profile) (Profile, error) {
 	}
 	if p.Auth.Kind != "" {
 		out.Auth = p.Auth
+	}
+	if len(p.Headers) > 0 {
+		// p's spellings are kept as written, so Validate still sees two
+		// spellings of one header in p and refuses them; a built-in
+		// header p names in any case is replaced.
+		merged := make(map[string]string, len(out.Headers)+len(p.Headers))
+		for k, v := range out.Headers {
+			if !hasHeader(p.Headers, k) {
+				merged[k] = v
+			}
+		}
+		maps.Copy(merged, p.Headers)
+		out.Headers = merged
 	}
 	if p.OpenModels != nil {
 		out.OpenModels = p.OpenModels
@@ -418,6 +434,13 @@ type Resolved struct {
 	BaseURL    string
 	MetricsURL string
 	Credential *auth.Credential
+
+	// headers are Profile.Headers read from the environment, canonical,
+	// empty values dropped. Unexported, behind a pointer (fmt prints a
+	// nested pointer as an address) and reached only through
+	// HeaderTransport and HeaderNames, so a value, which may be a secret,
+	// never shows in a %+v of the Resolved.
+	headers *resolvedHeaders
 }
 
 // Resolve expands, validates and resolves p. Any failure names the
@@ -466,6 +489,11 @@ func Resolve(ctx context.Context, p Profile, opts Options) (*Resolved, error) {
 		return nil, fail("metrics_url: %w", err)
 	}
 
+	headers, err := resolveHeaders(p.Headers, getenv)
+	if err != nil {
+		return nil, fail("%w", err)
+	}
+
 	authOpts := opts.Auth
 	if authOpts.Getenv == nil {
 		authOpts.Getenv = getenv
@@ -480,7 +508,7 @@ func Resolve(ctx context.Context, p Profile, opts Options) (*Resolved, error) {
 	if err != nil {
 		return nil, fail("%w", err)
 	}
-	return &Resolved{Profile: p, Params: params, BaseURL: strings.TrimRight(base, "/"), MetricsURL: metrics, Credential: cred}, nil
+	return &Resolved{Profile: p, Params: params, BaseURL: strings.TrimRight(base, "/"), MetricsURL: metrics, Credential: cred, headers: headers}, nil
 }
 
 // DecodeJSON reads a JSON array of profiles, refusing unknown fields:

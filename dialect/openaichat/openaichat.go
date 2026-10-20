@@ -57,7 +57,9 @@ type Options struct {
 	// sends none.
 	Credential *auth.Credential
 	// HTTPClient supplies the base transport and timeout. Nil means a
-	// client with http.DefaultTransport.
+	// client with http.DefaultTransport. coremodels.Open puts a profile's
+	// headers in it (profile.Resolved.HeaderTransport); a host building
+	// this client itself does the same.
 	HTTPClient *http.Client
 	// Retry is the HTTP-layer retry policy. Nil means retry.Default().
 	Retry *retry.Policy

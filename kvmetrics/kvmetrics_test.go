@@ -39,6 +39,7 @@ type serve struct {
 	bodies []string
 	n      int
 	auths  []string
+	tenant []string
 }
 
 func (s *serve) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -46,6 +47,7 @@ func (s *serve) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	body := s.bodies[min(s.n, len(s.bodies)-1)]
 	s.n++
 	s.auths = append(s.auths, r.Header.Get("Authorization"))
+	s.tenant = append(s.tenant, r.Header.Get("X-Tenant"))
 	s.mu.Unlock()
 	_, _ = w.Write([]byte(body))
 }
@@ -506,6 +508,42 @@ func TestCredentialsReachOnlyTheAPIsOrigin(t *testing.T) {
 	adc := profile.Options{Auth: auth.Options{DetectGoogle: func(context.Context, []string) (auth.TokenSource, error) { return staticToken("ya29"), nil }}}
 	if got := scrape(profile.Profile{Name: "d", Extends: "vllm", BaseURL: srv.URL + "/v1", MetricsURL: srv.URL + "/metrics", Auth: auth.Config{Kind: auth.GoogleADC}}, adc); got != "" {
 		t.Errorf("ADC over http: Authorization = %q, want none", got)
+	}
+}
+
+// TestHeadersReachOnlyTheAPIsOrigin: a profile's headers go to a
+// same-origin metrics endpoint, with or without a credential, and never
+// to another host.
+func TestHeadersReachOnlyTheAPIsOrigin(t *testing.T) {
+	s := &serve{bodies: []string{"vllm:kv_cache_usage_perc 0.5\n"}}
+	srv := httptest.NewServer(s)
+	t.Cleanup(srv.Close)
+	other := httptest.NewServer(s)
+	t.Cleanup(other.Close)
+	scrape := func(metricsURL string) string {
+		t.Helper()
+		p := profile.Profile{Name: "a", Extends: "vllm", BaseURL: srv.URL + "/v1", MetricsURL: metricsURL,
+			Headers: map[string]string{"X-Tenant": "acme"}}
+		r, err := profile.Resolve(context.Background(), p, profile.Options{Getenv: func(string) string { return "" }})
+		if err != nil {
+			t.Fatal(err)
+		}
+		sm, err := kvmetrics.FromProfile(r, kvmetrics.Options{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := sm.Snapshot(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return s.tenant[len(s.tenant)-1]
+	}
+	if got := scrape(srv.URL + "/metrics"); got != "acme" {
+		t.Errorf("same origin: X-Tenant = %q, want acme", got)
+	}
+	if got := scrape(other.URL + "/metrics"); got != "" {
+		t.Errorf("cross origin: X-Tenant = %q, want none", got)
 	}
 }
 
