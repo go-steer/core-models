@@ -23,6 +23,33 @@ Each module is tagged separately, Go's convention for nested modules:
 
 core-models is pre-1.0 and its API may change between minor versions.
 
+## genai types in the contract
+
+`llm` mirrors ADK's model types, so genai types are part of core-models'
+public API. That is a settled decision (design D7,
+[#69](https://github.com/go-steer/core-models/issues/69)): a genai major, or a
+breaking change to one of these types or a type they are built from, is a
+core-models major, and before 1.0 a minor with an **API Change** entry. The
+dependency floors below bound the exposure: the core requires the lowest genai
+either product uses.
+
+The types, by the package whose exported API carries them:
+
+| Package | genai types | Where |
+|---|---|---|
+| `llm` | `Content`, `GenerateContentConfig` | `Request` |
+| `llm` | `Content`, `CitationMetadata`, `FinishReason`, `GenerateContentResponseUsageMetadata`, `GroundingMetadata`, `LogprobsResult`, `Transcription` | `Response` |
+| `toolwire` | `FunctionDeclaration` | `Entry`, `EntryFor` |
+| `dialect/gemini` | `Backend` | `Options` |
+| `dialect/gemini` | `Caches` | `Client.Caches` |
+| `dialect/gemini` | `Content`, `Tool` | `ContextCacheInitFn` |
+| `dialect/gemini` | `GroundingMetadata` | `GroundingEvidence` |
+| `dialect/gemini/vertexcache` | `CachedContent`, `CreateCachedContentConfig`, `UpdateCachedContentConfig`, `DeleteCachedContentConfig`, `DeleteCachedContentResponse` | `CachesClient` |
+| `dialect/gemini/vertexcache` | `Content`, `Tool` | `Manager.Init` |
+
+No other core package exposes a genai type. `adkv2` exposes ADK v2 types,
+which is its purpose; the core module imports no ADK package.
+
 ## Dependency floors
 
 A library's requirements become the minimum versions its consumers get.

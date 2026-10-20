@@ -23,7 +23,7 @@ it.
 | Package | Exports | Imported by | Proposed | Why |
 |---|---|---|---|---|
 | `coremodels` (root) | `Open`, `Options`, `Provider` | mast, core-agent | stable | The front door: a profile to a provider |
-| `llm` | `LLM`, `Request`, `Response`, `ErrEmptyResponse` | mast, core-agent | stable, pending [#69](https://github.com/go-steer/core-models/issues/69) | The contract. Its fields are genai types (see below) |
+| `llm` | `LLM`, `Request`, `Response`, `ErrEmptyResponse` | mast, core-agent | stable | The contract. Its fields are genai types, by decision (see below) |
 | `usage` | `Detail`, `Attach`, `FromMetadata`, `Int64`, `MetadataKey` | mast, core-agent | stable | The normalized usage record (requirement R3) |
 | `callctx` | side-call, prompt-cache, built-ins and prior-success markers | core-agent | stable | Small and context-only. The dialects read it, and core-agent sets it |
 | `auth` | `Config`, `Credential`, `Kind`, `Options`, `TokenSource`, `QuotaProjecter`, `ErrNoADC`, `CloudPlatformScope` | mast, core-agent | stable | Credential kinds are part of the profile schema |
@@ -41,8 +41,12 @@ it.
 
 ## genai and ADK types in exported signatures
 
-These signatures tie core-models' compatibility to genai's, which is at v1.57.0
-([#69](https://github.com/go-steer/core-models/issues/69)):
+These signatures tie core-models' compatibility to genai's. That coupling is
+accepted (design D7, decided in
+[#69](https://github.com/go-steer/core-models/issues/69)): a breaking change to
+one of these types is a core-models major. The
+[modules page](/reference/modules/#genai-types-in-the-contract)
+has the complete list; the main ones are:
 - **`llm.Request`:** `[]*genai.Content` and `*genai.GenerateContentConfig`.
 - **`llm.Response`:** `*genai.Content`, `CitationMetadata`, `GroundingMetadata`,
   `GenerateContentResponseUsageMetadata`, `LogprobsResult`, `Transcription` and

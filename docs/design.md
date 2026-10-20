@@ -63,6 +63,7 @@ import it. Product policy stays in each product.
 | D4 | **New providers first, then extract the existing ones** | New providers are the requirement. The contract is still designed against the existing Gemini and Anthropic adapters ([§4](#4-the-contract)), so extracting them later is a move, not a redesign. |
 | D5 | **The library does not use ADK's `model/openaimodel`** *(amended in L1 and L2: both OpenAI dialects are written on net/http and their own wire types, not openai-go; see §7.1 and §7.2)* | It now speaks both Responses and Chat Completions, but it exists only in ADK v2, so core-agent cannot use it (D2). The plan was to write the OpenAI dialects on `openai-go/v3` directly. In the event neither uses it: pointer-typed wire structs keep an unreported count distinct from zero, servers add and omit fields an SDK's types fight, and no module enters the graph. |
 | D6 | **No proxy as a required hop** | Carried over from mast model-support §4.7. LiteLLM or OpenRouter is reachable as an ordinary `openai-chat` profile; it is never in the path by default. |
+| D7 | **The contract is genai-typed** *(decided 2026-10-20, [#69](https://github.com/go-steer/core-models/issues/69))* | `llm` mirrors ADK's model types field for field ([§4](#4-the-contract)), so genai types are part of core-models' public API: `llm.Request` and `llm.Response` carry them, and so do a few signatures in `toolwire`, `dialect/gemini` and `vertexcache`. The [modules page](./site/src/content/docs/reference/modules.md#genai-types-in-the-contract) lists them. Both products are built on ADK, whose model types are genai's; that is what keeps `adkv2` a field-for-field shim. Our own types at the boundary (option b in #69) were considered and rejected: they add a conversion in every adapter and in `adkv2`, to insulate core-models from genai changes that ADK would force on the products anyway. **The rule:** a genai major, or a breaking change to a listed genai type (including the types it is built from), is a core-models major; before 1.0, a minor with an **API Change** entry. `llm` keeps tracking ADK's model types as ADK adds fields; an added field is additive, so a minor. The exposure is bounded by house rule #10: the core requires the lowest genai either product uses, so importing core-models never moves genai underneath a product. |
 
 ## 3. Module layout
 
@@ -156,6 +157,8 @@ type Request struct {
 type Response struct { /* Content, UsageMetadata, CustomMetadata, ModelVersion,
     Partial, TurnComplete, FinishReason, ErrorCode, ErrorMessage, ... */ }
 ```
+
+The genai types in these fields are part of the public API by decision ([D7](#2-settled-decisions)): a breaking change to one of them is a core-models major.
 
 ```go
 package profile
@@ -811,7 +814,7 @@ Until then, a minor release may break the API, and the CHANGELOG says so under
 | # | Criterion | Exit condition | Issue |
 |---|---|---|---|
 | 1 | **A deliberate public API.** Every package is classified stable, experimental or internal, and the flagged names are resolved | Every exported name has a stated status. CI blocks an unlabelled breaking change to a stable package (`gorelease`/`apidiff`) | [#68](https://github.com/go-steer/core-models/issues/68) |
-| 2 | **The genai/ADK type coupling is decided.** `llm` carries genai types, as do `toolwire` and parts of `dialect/gemini` | A recorded decision in [§2](#2-settled-decisions): either a genai breaking change means a core-models major, or the boundary gets its own types | [#69](https://github.com/go-steer/core-models/issues/69) |
+| 2 | **The genai/ADK type coupling is decided.** `llm` carries genai types, as do `toolwire` and parts of `dialect/gemini` | A recorded decision in [§2](#2-settled-decisions): either a genai breaking change means a core-models major, or the boundary gets its own types. *Decided 2026-10-20: the coupling is accepted ([D7](#2-settled-decisions)); the genai types in the contract are listed on the modules page* | [#69](https://github.com/go-steer/core-models/issues/69) |
 | 3 | **One typed error contract.** Every dialect's errors answer one classification from a dependency-free package | Neither product matches on a core-models error's text | [#70](https://github.com/go-steer/core-models/issues/70) |
 | 4 | **A versioning rule for price data** | A documented rule that the weekly regen applies without a human classifying each PR | [#71](https://github.com/go-steer/core-models/issues/71) |
 | 5 | **The open questions that shape the API are answered:** [Q2](#13-open-questions) (tiers), Q3 (price dimensions), Q6 (governance, cadence, deprecation, Go versions) and Q7 (retry posture) | Each is marked answered in §13 and reflected in the API | [#72](https://github.com/go-steer/core-models/issues/72), [#73](https://github.com/go-steer/core-models/issues/73), [#74](https://github.com/go-steer/core-models/issues/74), [#75](https://github.com/go-steer/core-models/issues/75) |
