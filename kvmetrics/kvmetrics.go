@@ -210,7 +210,9 @@ func attachCredential(r *profile.Resolved) bool {
 	if err1 != nil || err2 != nil || !strings.EqualFold(m.Scheme, b.Scheme) || !strings.EqualFold(m.Host, b.Host) {
 		return false
 	}
-	return r.Credential.Kind() != auth.GoogleADC || strings.EqualFold(m.Scheme, "https")
+	// A Google or OAuth2 access token goes only over https.
+	k := r.Credential.Kind()
+	return (k != auth.GoogleADC && k != auth.OAuth2ClientCredentials) || strings.EqualFold(m.Scheme, "https")
 }
 
 // Snapshot scrapes the endpoint once.

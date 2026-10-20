@@ -205,7 +205,7 @@ llm/                 the contract: LLM, Request, Response (mirrors ADK's model t
 usage/               usage.Detail, the normalized usage record
 callctx/             per-call context markers shared with the products
 retry/               HTTP-layer retry: Policy.Transport, Record
-auth/                credential resolution: api_key, bearer, google_adc, none
+auth/                credential resolution: api_key, bearer, google_adc, oauth2_client_credentials, none
 profile/             provider profiles: schema, built-ins, extends, Resolve
 toolwire/            the shared tool-schema invariant every adapter is held to
 kvmetrics/           opt-in KV-cache sampler: a server's Prometheus endpoint → a fleet-level Window

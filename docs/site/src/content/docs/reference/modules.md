@@ -67,6 +67,11 @@ Vertex AI uses those credentials too, rather than the SDK's `vertex`
 package, which would bring in `golang.org/x/oauth2` and
 `google.golang.org/api`.
 
+For the same reason the `oauth2_client_credentials` auth kind does its
+token exchange itself (one form POST, cached on `expires_in`) rather than
+through `golang.org/x/oauth2/clientcredentials`, which would add a module,
+and so a floor, for both products.
+
 Exceptions are made for security fixes:
 
 | Floor | Why |

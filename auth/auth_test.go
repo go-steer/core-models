@@ -35,17 +35,23 @@ func TestValidate(t *testing.T) {
 		c       auth.Config
 		wantErr string
 	}{
-		"api key":         {auth.Config{Kind: auth.APIKey, Env: "OPENAI_API_KEY"}, ""},
-		"bearer":          {auth.Config{Kind: auth.Bearer, Env: "TOKEN"}, ""},
-		"adc":             {auth.Config{Kind: auth.GoogleADC}, ""},
-		"adc with scopes": {auth.Config{Kind: auth.GoogleADC, Scopes: []string{"s"}}, ""},
-		"none":            {auth.Config{Kind: auth.None}, ""},
-		"missing kind":    {auth.Config{}, "kind is required"},
-		"unknown kind":    {auth.Config{Kind: "oauth"}, `unknown auth kind "oauth"`},
-		"api key no env":  {auth.Config{Kind: auth.APIKey}, "needs env"},
-		"api key scopes":  {auth.Config{Kind: auth.APIKey, Env: "K", Scopes: []string{"s"}}, "takes no scopes"},
-		"adc with env":    {auth.Config{Kind: auth.GoogleADC, Env: "X"}, "takes no env"},
-		"none with env":   {auth.Config{Kind: auth.None, Env: "X"}, "takes no env"},
+		"api key":                {auth.Config{Kind: auth.APIKey, Env: "OPENAI_API_KEY"}, ""},
+		"bearer":                 {auth.Config{Kind: auth.Bearer, Env: "TOKEN"}, ""},
+		"adc":                    {auth.Config{Kind: auth.GoogleADC}, ""},
+		"adc with scopes":        {auth.Config{Kind: auth.GoogleADC, Scopes: []string{"s"}}, ""},
+		"none":                   {auth.Config{Kind: auth.None}, ""},
+		"missing kind":           {auth.Config{}, "kind is required"},
+		"unknown kind":           {auth.Config{Kind: "oauth"}, `unknown auth kind "oauth"`},
+		"api key no env":         {auth.Config{Kind: auth.APIKey}, "needs env"},
+		"api key scopes":         {auth.Config{Kind: auth.APIKey, Env: "K", Scopes: []string{"s"}}, "takes no scopes"},
+		"adc with env":           {auth.Config{Kind: auth.GoogleADC, Env: "X"}, "takes no env"},
+		"none with env":          {auth.Config{Kind: auth.None, Env: "X"}, "takes no env"},
+		"oauth2":                 {auth.Config{Kind: auth.OAuth2ClientCredentials, TokenURL: "https://idp/token", ClientIDEnv: "I", ClientSecretEnv: "S"}, ""},
+		"oauth2 post":            {auth.Config{Kind: auth.OAuth2ClientCredentials, TokenURL: "https://idp/token", ClientIDEnv: "I", ClientSecretEnv: "S", ClientAuth: "post"}, ""},
+		"oauth2 missing":         {auth.Config{Kind: auth.OAuth2ClientCredentials, ClientIDEnv: "I"}, "needs token_url, client_secret_env"},
+		"oauth2 with env":        {auth.Config{Kind: auth.OAuth2ClientCredentials, TokenURL: "https://idp/token", ClientIDEnv: "I", ClientSecretEnv: "S", Env: "X"}, "takes no env or alt_env"},
+		"oauth2 bad client_auth": {auth.Config{Kind: auth.OAuth2ClientCredentials, TokenURL: "https://idp/token", ClientIDEnv: "I", ClientSecretEnv: "S", ClientAuth: "jwt"}, `"jwt" is not "basic" or "post"`},
+		"api key with token_url": {auth.Config{Kind: auth.APIKey, Env: "K", TokenURL: "https://idp/token"}, "takes no token_url"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			err := tc.c.Validate()

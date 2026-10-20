@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Added
+
+- **`auth.kind: oauth2_client_credentials`** (#81), for a model behind an
+  authenticating gateway: Apigee, Azure API Management with Entra ID,
+  Kong, Okta, SAP AI Core. A profile names `token_url` (which may use
+  `${VAR}`), `client_id_env` and `client_secret_env`, and optionally
+  `scopes`, `audience` and `client_auth` (`basic` or `post`). The first
+  token is fetched when the profile is opened, so a wrong secret fails
+  then. Tokens are refreshed in the background before they expire,
+  concurrent requests share one fetch, and a 401 on a token older than
+  10 s drops it and resends the request once. The OpenAI dialects and
+  `anthropic` support it; `gemini` refuses it. No new dependency: the
+  exchange is not taken from `golang.org/x/oauth2`. New:
+  `auth.Options.HTTPClient`, for the token requests.
+- **`retry` does not resend on an error that marks itself permanent**
+  (`Permanent() bool`). The OAuth2 token endpoint's 4xx refusals do, so a
+  rotated client secret is reported at once instead of after the retry
+  budget.
+- **`kvmetrics` sends an OAuth2 token only over https**, as it already
+  did a Google ADC token.
+
 ### Fixed
 
 - **The regen's deprecation-grace report lists only rows the grace kept.**

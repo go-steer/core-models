@@ -51,7 +51,7 @@ w, _ := run.Stop(ctx)
 `FromProfile` sends the profile's credential only to a metrics endpoint
 with the **same origin** (scheme, host and port) as the profile's
 `base_url`, the way package `auth` sends it to the API (a Bearer header,
-for an API key too), and never a Google ADC token over plain `http`. A
+for an API key too), and never a Google ADC or OAuth2 access token over plain `http`. A
 metrics endpoint on another host is scraped without credentials. One that
 needs a different credential takes your own `Options.HTTPClient`, to which
 nothing is added.

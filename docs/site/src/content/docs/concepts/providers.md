@@ -108,6 +108,40 @@ window, not one request, and are labelled that way.
 Self-hosted models have no per-token price. Cost shows as unpriced unless
 you declare a rate.
 
+## Behind an OAuth2 gateway
+
+A model behind an authenticating gateway (Apigee, Azure API Management
+with Entra ID, Kong, Okta, SAP AI Core) usually takes a short-lived token
+from an OAuth2 client-credentials exchange rather than a static key. The
+`oauth2_client_credentials` auth kind does that exchange from
+configuration alone:
+
+```json
+{
+  "name": "gateway",
+  "extends": "openai-compatible",
+  "base_url": "https://models.example.com/v1",
+  "auth": {
+    "kind": "oauth2_client_credentials",
+    "token_url": "${GATEWAY_TOKEN_URL}",
+    "client_id_env": "GATEWAY_CLIENT_ID",
+    "client_secret_env": "GATEWAY_CLIENT_SECRET",
+    "scopes": ["models.invoke"]
+  }
+}
+```
+
+The first token is fetched when the profile is opened, so a wrong secret
+or an unreachable token endpoint fails then, naming the variables and the
+endpoint's host. The token is cached and refreshed in the background
+before it expires, so a session can run longer than any one token and a
+slow token endpoint delays nothing while the current token is good. If the
+gateway answers 401 to a token that is not brand new (revoked early), the
+request is sent once more with a new token. A refused client secret is
+reported, not retried. The client secret and the tokens never appear in an
+error or a log line. The gateway's own metrics endpoint gets the token
+only over https.
+
 ## What "supported" will mean
 
 A provider is called supported only when:

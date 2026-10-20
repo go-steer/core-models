@@ -36,8 +36,12 @@ A self-hosted vLLM server, starting from the built-in `vllm` template:
 | `platform` | Where the vendor's API is hosted, when that changes the request. `vertex` routes an `anthropic` profile the way Vertex AI serves Claude: the model in the URL path, `anthropic_version` in the body. Set on `anthropic-vertex` and inherited by profiles extending it; unset means the vendor's own API. Said explicitly because neither the credential nor the backend name settles it: a proxy in front of Vertex may take a bearer token |
 | `base_url` | The API root. May contain `{param}` placeholders and `${VAR}` references. Required for the OpenAI dialects. For `anthropic` with `platform: vertex`, the Vertex AI publisher prefix (`…/publishers/anthropic/models`) |
 | `params` | Values for `base_url`'s placeholders. Each may be `${VAR}` or `${VAR:-default}`, and a default may itself be a reference: `${A:-${B:-x}}` is the first of `A` and `B` that is set, else `x` |
-| `auth.kind` | `api_key` or `bearer` (with `auth.env` naming the variable that holds it), `google_adc`, or `none` |
-| `auth.scopes` | OAuth scopes for `google_adc`. Defaults to cloud-platform |
+| `auth.kind` | `api_key` or `bearer` (with `auth.env` naming the variable that holds it), `google_adc`, `oauth2_client_credentials`, or `none` |
+| `auth.scopes` | OAuth scopes for `google_adc` (defaults to cloud-platform) or `oauth2_client_credentials` (none by default) |
+| `auth.token_url` | `oauth2_client_credentials`: the token endpoint. May be or contain `${VAR}` and `${VAR:-default}` |
+| `auth.client_id_env`, `auth.client_secret_env` | `oauth2_client_credentials`: the variables holding the client id and secret |
+| `auth.audience` | `oauth2_client_credentials`: an `audience` for identity providers that require one. Optional |
+| `auth.client_auth` | `oauth2_client_credentials`: `basic` (HTTP Basic, the default) or `post` (id and secret in the form body) |
 | `backend` | The name prices are keyed on. Defaults to `name`, except that a profile extending `vertex-maas`, `gemini` or `vertex` keeps the built-in's |
 | `open_models` | Accept any model id, not only the listed ones. Set on every self-hosted template |
 | `capabilities` | `response_schema`, `reasoning_echo`, `parallel_tool_calls`, `server_tools`, `streaming`, `forced_tool_choice`. Each is true, false, or unset. Unset reads as absent, except `forced_tool_choice`, which is assumed supported unless declared false |

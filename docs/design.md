@@ -71,7 +71,7 @@ import it. Product policy stays in each product.
 github.com/go-steer/core-models              # core module: genai + vendor SDKs, no ADK
   llm/            Request, Response, LLM interface (mirror of ADK's model types)
   profile/        Profile schema, built-in profiles, Open(ctx, Profile) → Provider
-  auth/           credential sources: api_key(env), google_adc, bearer(env), none
+  auth/           credential sources: api_key(env), google_adc, bearer(env), oauth2_client_credentials, none
   usage/          Detail (normalized usage record) + metadata (de)serialization
   callctx/        shared context vocabulary (side call, opt-outs, prior success, retry key)
   retry/          HTTP-layer, header-aware retry + transient classification (core-agent retry.go, mast modelretry, fantasy retry.go)
@@ -208,7 +208,7 @@ config-layout decision over a shared schema.
 name: house-vllm
 dialect: openai-chat            # openai-chat | openai-responses | anthropic | gemini
 base_url: http://vllm.infra.svc:8000/v1
-auth: {kind: none}              # api_key{env} | google_adc | bearer{env} | none
+auth: {kind: none}              # api_key{env} | google_adc | bearer{env} | oauth2_client_credentials | none
 backend: house-vllm             # defaults to name
 open_models: true               # self-hosted: the operator names the model
 capabilities:
@@ -232,6 +232,24 @@ tiers: {mid: Qwen/Qwen3-Coder-Next}
   template's `true` with `false`.
 - Per-model `rates:` (since v0.5.0) feed the price catalog's lowest layer through
   `pricing.DeclaredFromProfiles` (L6, [§9](#9-pricing-l6)).
+- `auth.kind: oauth2_client_credentials` (#81) is the credential of a model
+  behind an authenticating gateway (Apigee, Azure API Management with Entra
+  ID, Kong, Okta, SAP AI Core). `token_url` (which may use `${VAR}`),
+  `client_id_env` and `client_secret_env` name the token endpoint and the
+  variables holding the client id and secret; `scopes`, `audience` and
+  `client_auth` (`basic` or `post`) are optional. The first token is
+  fetched at `Resolve`, so a wrong secret fails at construction (R1). The
+  token is cached and refreshed in the background a little before
+  `expires_in` (a minute, or a tenth of a short lifetime), so a slow token
+  endpoint delays no request while the token is still good; a failed
+  refresh backs off for 5 s. Concurrent callers share one fetch. A 401
+  drops the refused token and resends the request once with a new one,
+  unless the token is under 10 s old (then the server is refusing the
+  client, not the token's age). A token endpoint's 4xx refusal marks its
+  error permanent, and `retry` does not resend on a permanent error. The exchange is hand-written rather than taken from
+  `golang.org/x/oauth2`, which is not in the core's dependency graph
+  (rule #10). The `gemini` dialect refuses it; the OpenAI dialects and
+  `anthropic` send the token as a bearer.
 
 `Open` (profile to `Provider`) lands with the first dialect in L1. Until
 then, `Resolve` is the construction-time check.

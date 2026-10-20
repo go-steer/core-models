@@ -435,6 +435,13 @@ func retryable(ctx context.Context, resp *http.Response, err error) bool {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return false
 		}
+		// An error that says it is permanent — package auth's token
+		// endpoint refusing the client's secret — would fail the same
+		// way again.
+		var p interface{ Permanent() bool }
+		if errors.As(err, &p) && p.Permanent() {
+			return false
+		}
 		return !certificateError(err)
 	}
 	switch strings.ToLower(resp.Header.Get("x-should-retry")) {
