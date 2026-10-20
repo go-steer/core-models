@@ -137,7 +137,7 @@ AI. The two mistakes cost differently, too. A row for a model that has shut
 down prices calls that fail anyway. A missing row for one that still answers
 leaves it unpriced, and a product that refuses unpriced models under a cost
 ceiling then refuses to start. Each regen lists the models it keeps only
-through their grace, with the date they drop. A model a probe shows gone can
+through their grace, with the rows each keeps and the date they drop. A model a probe shows gone can
 drop sooner: name it, with the evidence, in the generator's `retiredUpstream`.
 
 A weekly workflow opens a pull request when LiteLLM's numbers move, with a "What

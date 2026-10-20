@@ -256,6 +256,10 @@ type generatedEntry struct {
 	ContextWindowTokens         int
 	Provider                    string
 	LongContext                 *litellm.LongContext
+	// Grace is set when the row exists only because deprecationGrace
+	// hasn't run out for the LiteLLM entry that decided it, and says
+	// when it drops. It feeds the regen report and is never rendered.
+	Grace string
 }
 
 func main() {
@@ -319,7 +323,7 @@ func main() {
 		}
 	}
 
-	if grace := inGrace(all, append(append([]generatedEntry{}, kept...), qualified...), now); len(grace) > 0 {
+	if grace := inGrace(kept, qualified); len(grace) > 0 {
 		fmt.Fprintf(os.Stderr,
 			"regen-builtin-pricing: %d models kept through their deprecation grace:\n", len(grace))
 		for _, g := range grace {
@@ -800,41 +804,62 @@ func pastGrace(e liteLLMEntry, today time.Time) (string, bool) {
 		e.DeprecationDate, d.Add(deprecationGrace).Format("2006-01-02")), true
 }
 
-// inGrace lists the models whose rows are kept only by deprecationGrace:
-// LiteLLM's date has passed, the grace has not. emitted is every rendered
-// row name, bare and qualified. The list is for the regen report, so a
-// reviewer sees which kept rows are on borrowed time.
-func inGrace(all map[string]liteLLMEntry, emitted []generatedEntry, today time.Time) []rejection {
-	names := map[string]bool{}
-	for _, e := range emitted {
-		names[e.Name] = true
-		if _, model, ok := strings.Cut(e.Name, "/"); ok {
-			names[model] = true
+// withGrace marks row as kept only by deprecationGrace when e, the
+// LiteLLM entry whose eligibility decided the row, is past its
+// deprecation date but not past the grace.
+func withGrace(row generatedEntry, e liteLLMEntry, today time.Time) generatedEntry {
+	d, ok := deprecated(e)
+	if !ok || d.After(today) {
+		return row
+	}
+	if _, gone := pastGrace(e, today); gone {
+		return row
+	}
+	row.Grace = fmt.Sprintf("deprecated upstream on %s, kept until %s",
+		e.DeprecationDate, d.Add(deprecationGrace).Format("2006-01-02"))
+	return row
+}
+
+// inGrace lists, per model, the rendered rows that exist only because
+// deprecationGrace hasn't run out, for the regen report: a reviewer sees
+// which rows are on borrowed time and when each drops. It reads the
+// Grace mark each pass set from the entry it actually decided on, so a
+// deprecation date on an entry no pass consulted (another provider's
+// copy, a dated spelling) never shows up here.
+func inGrace(kept, qualified []generatedEntry) []rejection {
+	type model struct {
+		why  string
+		rows []string
+	}
+	byModel := map[string]*model{}
+	add := func(id, why, row string) {
+		m := byModel[id]
+		if m == nil {
+			m = &model{why: why}
+			byModel[id] = m
+		}
+		m.rows = append(m.rows, row)
+	}
+	for _, e := range kept {
+		if e.Grace == "" {
+			continue
+		}
+		add(e.Name, e.Grace, "bare")
+		if e.ContextWindowTokens > 0 {
+			add(e.Name, e.Grace, "window")
 		}
 	}
-	seen := map[string]bool{}
-	var out []rejection
-	for key, e := range all {
-		d, ok := deprecated(e)
-		if !ok || d.After(today) {
+	for _, e := range qualified {
+		if e.Grace == "" {
 			continue
 		}
-		if _, gone := pastGrace(e, today); gone {
-			continue
-		}
-		id := key
-		if i := strings.LastIndex(id, "/"); i >= 0 {
-			id = id[i+1:]
-		}
-		if bare, ok := litellm.BareID(id); ok {
-			id = bare
-		}
-		if !names[id] || seen[id] {
-			continue
-		}
-		seen[id] = true
-		out = append(out, rejection{Name: id, Why: fmt.Sprintf("deprecated upstream on %s, kept until %s",
-			e.DeprecationDate, d.Add(deprecationGrace).Format("2006-01-02"))})
+		backend, id, _ := strings.Cut(e.Name, "/")
+		add(id, e.Grace, backend+"/")
+	}
+	out := make([]rejection, 0, len(byModel))
+	for id, m := range byModel {
+		sort.Strings(m.rows)
+		out = append(out, rejection{Name: id, Why: fmt.Sprintf("%s (%s)", m.why, strings.Join(m.rows, ", "))})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
@@ -859,7 +884,7 @@ func qualifyProfileBackends(all map[string]liteLLMEntry, today time.Time) []gene
 			if ok, _ := eligibleProfile(e, today); !ok {
 				continue
 			}
-			out = append(out, ratesOf(b.Name+"/"+model, e))
+			out = append(out, withGrace(ratesOf(b.Name+"/"+model, e), e, today))
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
@@ -881,7 +906,7 @@ func selectModels(all map[string]liteLLMEntry, today time.Time) ([]generatedEntr
 			}
 			continue
 		}
-		kept = append(kept, ratesOf(name, e))
+		kept = append(kept, withGrace(ratesOf(name, e), e, today))
 	}
 	sort.Slice(kept, func(i, j int) bool { return kept[i].Name < kept[j].Name })
 	sort.Slice(rejected, func(i, j int) bool { return rejected[i].Name < rejected[j].Name })
@@ -947,7 +972,7 @@ func discoverPrefixOnly(all map[string]liteLLMEntry, today time.Time) (bare, qua
 			}
 		}
 		if convention != nil {
-			bare = append(bare, ratesOf(id, *convention))
+			bare = append(bare, withGrace(ratesOf(id, *convention), *convention, today))
 			continue
 		}
 		for _, b := range litellm.Backends {
@@ -962,7 +987,7 @@ func discoverPrefixOnly(all map[string]liteLLMEntry, today time.Time) (bare, qua
 				rejected = append(rejected, rejection{Name: key, Why: why})
 				continue
 			}
-			qualified = append(qualified, ratesOf(b.Name+"/"+id, e))
+			qualified = append(qualified, withGrace(ratesOf(b.Name+"/"+id, e), e, today))
 		}
 	}
 	return bare, qualified, rejected
@@ -1054,7 +1079,11 @@ func qualifyByBackend(kept []generatedEntry, all map[string]liteLLMEntry) []gene
 			if !ok {
 				continue
 			}
-			out = append(out, ratesOf(b.Name+"/"+k.Name, e))
+			// The row rides on the bare decision, so it is on borrowed
+			// time exactly when the bare row is.
+			row := ratesOf(b.Name+"/"+k.Name, e)
+			row.Grace = k.Grace
+			out = append(out, row)
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
