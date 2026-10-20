@@ -86,9 +86,11 @@ func TestGenerate_DeprecationGraceKeepsEveryRow(t *testing.T) {
 	if want := []string{"gemini/gemini-9.5-flash", "vertex/gemini-9.5-flash"}; !slices.Equal(names, want) {
 		t.Errorf("qualified = %v, want %v", names, want)
 	}
-	grace := inGrace(all, append(kept, qualified...), today)
-	if len(grace) != 1 || grace[0].Name != "gemini-9.5-flash" || !strings.Contains(grace[0].Why, "kept until") {
-		t.Errorf("inGrace = %+v, want gemini-9.5-flash reported as kept until a date", grace)
+	grace := inGrace(kept, qualified)
+	want := "deprecated upstream on " + yesterday + ", kept until " + day(today.AddDate(0, 0, -1).Add(deprecationGrace)) +
+		" (bare, gemini/, vertex/, window)"
+	if len(grace) != 1 || grace[0].Name != "gemini-9.5-flash" || grace[0].Why != want {
+		t.Errorf("inGrace = %+v, want gemini-9.5-flash once: %q", grace, want)
 	}
 
 	// Past the grace, all three go: the refused bare key keeps the
@@ -112,6 +114,44 @@ func TestDiscoverPrefixOnly_DeprecationGrace(t *testing.T) {
 	}
 	if len(rejected) != 1 || rejected[0].Name != "vertex_ai/gemini-9-gone" || !strings.Contains(rejected[0].Why, "grace ended") {
 		t.Errorf("rejected = %+v, want vertex_ai/gemini-9-gone past grace", rejected)
+	}
+}
+
+// TestInGrace_OnlyDecidingEntries is the v0.13.5 report bug: dates on
+// entries no pass decides on (another provider's copy, a dated
+// spelling's Vertex copy, a Vertex copy of a model whose bare key
+// decides) were
+// reported as kept by grace though they never gated a row. Only a row
+// whose deciding entry is in grace is listed, once per model.
+func TestInGrace_OnlyDecidingEntries(t *testing.T) {
+	t.Parallel()
+	yesterday := day(today.AddDate(0, 0, -1))
+	all := map[string]liteLLMEntry{
+		// Undated bare keys decide (the plain and the dated spelling);
+		// the dates on other providers' copies are noise. Shaped like
+		// LiteLLM's claude-haiku-4-5 on 2026-10-20.
+		"claude-9-haiku":                    deprecatedChat(""),
+		"claude-9-haiku-20990101":           deprecatedChat(""),
+		"github_copilot/claude-9-haiku":     deprecatedChat(yesterday),
+		"vertex_ai/claude-9-haiku":          deprecatedChat(yesterday),
+		"vertex_ai/claude-9-haiku@20990101": deprecatedChat(yesterday),
+		// Dated bare key decides: genuinely kept by grace.
+		"gemini-9.6-flash":           deprecatedChat(yesterday),
+		"vertex_ai/gemini-9.6-flash": deprecatedChat(""),
+	}
+	kept, qualified, _ := generate(all, today)
+	grace := inGrace(kept, qualified)
+	var names []string
+	for _, g := range grace {
+		names = append(names, g.Name)
+	}
+	if want := []string{"gemini-9.6-flash"}; !slices.Equal(names, want) {
+		t.Errorf("inGrace names = %v, want %v (claude-9-haiku's bare key is undated)", names, want)
+	}
+	for _, e := range append(append([]generatedEntry{}, kept...), qualified...) {
+		if strings.Contains(e.Name, "claude-9-haiku") && e.Grace != "" {
+			t.Errorf("%s marked in grace (%q); its deciding entry is undated", e.Name, e.Grace)
+		}
 	}
 }
 

@@ -2,27 +2,44 @@
 
 ## Unreleased
 
+### Fixed
+
+- **The regen's deprecation-grace report lists only rows the grace kept.**
+  It matched deprecation dates by model id under any provider, so dates on
+  `github_copilot/…`, `vertex_ai/claude-…` and dated spellings were
+  reported as models kept by grace though they never gated a row. It now
+  reads the decision each pass made from the entry it decided on, and
+  lists each model once with the rows it keeps (`bare`, `gemini/`,
+  `vertex/`, `window`, …). The generated table is unchanged. Found by
+  core-agent's session.
+
 ## v0.13.5 (2026-10-20)
 
 ### Fixed
 
 - **The price table no longer drops a model on its deprecation date.**
   LiteLLM dated `gemini-2.5-flash`, `gemini-2.5-flash-lite` and
-  `gemini-2.5-pro` 2026-10-20, and back-dated others (`gpt-5-mini`,
-  `gpt-5.4`, `gpt-5.5`, `claude-haiku-4-5`, `claude-sonnet-4-5`,
-  `gemini-3.7-flash`, `grok-4.5`). The generator dropped any model whose
-  date had passed, so the next regen would have removed 13 models. The
-  Gemini 2.5 models still answer on both backends, and `gpt-5-mini` and
-  `claude-haiku-4-5` passed the live canary the day before. An unpriced
-  model is refused under a cost ceiling in core-agent, so the regen would
-  have stopped deployments from starting. A deprecated model now keeps its
-  rows for 90 days past the date, and each regen lists the models kept
-  that way. Models a live probe shows gone drop sooner, by name: this
-  release names the ones the old rule had already dropped and that now
-  404 (`claude-3-haiku`, `gpt-3.5-turbo-1106`, the `gpt-5*-codex` models
-  and the `gpt-4o*-search-preview` models), and the list now covers the
+  `gemini-2.5-pro` 2026-10-20, and the generator dropped any model whose
+  date had passed, so the next regen would have removed their 12 rows
+  (bare, `gemini/`, `vertex/` and the context windows). All three still
+  answer on the Gemini API and on Vertex AI. An unpriced model is refused
+  under a cost ceiling in core-agent, so the regen would have stopped
+  deployments from starting. A deprecated model now keeps its rows for 90
+  days past the date, and each regen lists the models kept that way.
+  Models a live probe shows gone drop sooner, by name: this release names
+  the ones the old rule had already dropped and that now 404
+  (`claude-3-haiku`, `gpt-3.5-turbo-1106`, the `gpt-5*-codex` models and
+  the `gpt-4o*-search-preview` models), and the list now covers the
   `openai`, `xai` and `vertex-maas` rows too. Found by core-agent's release
   preflight.
+
+  *Corrected 2026-10-20:* this entry first said 13 models were at risk,
+  naming `gpt-5-mini`, `gpt-5.4`, `gpt-5.5`, `claude-haiku-4-5`,
+  `claude-sonnet-4-5`, `gemini-3.7-flash` and `grok-4.5` too. That count
+  came from the regen's grace report, which read deprecation dates off
+  entries no rule consults (`github_copilot/…`, `vertex_ai/claude-…` and
+  dated spellings). Run on the same LiteLLM snapshot, v0.13.4's generator
+  differs from v0.13.5's by the three Gemini 2.5 models alone.
 - **A 10 MB generator binary committed at the repository root in v0.13.1
   is removed**, and gitignored.
 
