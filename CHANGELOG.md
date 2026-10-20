@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+## v0.13.5 (2026-10-20)
+
+### Fixed
+
+- **The price table no longer drops a model on its deprecation date.**
+  LiteLLM dated `gemini-2.5-flash`, `gemini-2.5-flash-lite` and
+  `gemini-2.5-pro` 2026-10-20, and back-dated others (`gpt-5-mini`,
+  `gpt-5.4`, `gpt-5.5`, `claude-haiku-4-5`, `claude-sonnet-4-5`,
+  `gemini-3.7-flash`, `grok-4.5`). The generator dropped any model whose
+  date had passed, so the next regen would have removed 13 models. The
+  Gemini 2.5 models still answer on both backends, and `gpt-5-mini` and
+  `claude-haiku-4-5` passed the live canary the day before. An unpriced
+  model is refused under a cost ceiling in core-agent, so the regen would
+  have stopped deployments from starting. A deprecated model now keeps its
+  rows for 90 days past the date, and each regen lists the models kept
+  that way. Models a live probe shows gone drop sooner, by name: this
+  release names the ones the old rule had already dropped and that now
+  404 (`claude-3-haiku`, `gpt-3.5-turbo-1106`, the `gpt-5*-codex` models
+  and the `gpt-4o*-search-preview` models), and the list now covers the
+  `openai`, `xai` and `vertex-maas` rows too. Found by core-agent's release
+  preflight.
+- **A 10 MB generator binary committed at the repository root in v0.13.1
+  is removed**, and gitignored.
+
+### Changed
+
+- **The built-in table is regenerated:** `openai/gpt-5.5-cyber-preview` and
+  `vertex-maas/deepseek-ai/deepseek-v4.1-flash-maas` are added; no row is
+  removed and no rate moved.
+
 ## v0.13.4 (2026-10-19)
 
 ### Fixed

@@ -22,3 +22,6 @@ go.work.sum
 .vscode/
 .DS_Store
 *.swp
+
+# go build ./dev/regen-builtin-pricing from the repo root drops its binary here.
+/regen-builtin-pricing
