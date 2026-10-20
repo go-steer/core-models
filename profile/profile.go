@@ -416,7 +416,9 @@ func (p Profile) Validate() error {
 	if err := p.Auth.Validate(); err != nil {
 		bad("%v", err)
 	}
-	if p.Auth.TokenURL != "" {
+	// A token_url that starts with ${VAR} is a whole URL from the
+	// environment (SAP's AICORE_AUTH_URL), checked once it is read.
+	if p.Auth.TokenURL != "" && !strings.HasPrefix(p.Auth.TokenURL, "${") {
 		if err := checkURL(stripEnv(p.Auth.TokenURL)); err != nil {
 			bad("auth.token_url: %v", err)
 		}

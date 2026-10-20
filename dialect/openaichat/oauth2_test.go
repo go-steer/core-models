@@ -23,10 +23,11 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"google.golang.org/genai"
+
 	"github.com/go-steer/core-models/auth"
 	"github.com/go-steer/core-models/dialect/openaichat"
 	"github.com/go-steer/core-models/llm"
-	"google.golang.org/genai"
 )
 
 // oauthCredential resolves an OAuth2 client-credentials credential

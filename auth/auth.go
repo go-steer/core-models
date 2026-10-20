@@ -67,7 +67,7 @@ const (
 	// Management with Entra ID, Kong or Okta OIDC, SAP AI Core. The token
 	// is cached and refreshed before it expires, so a session may outlive
 	// any one token.
-	OAuth2ClientCredentials Kind = "oauth2_client_credentials"
+	OAuth2ClientCredentials Kind = "oauth2_client_credentials" //nolint:gosec // a kind name, not a credential
 )
 
 // kindList is every Kind, for error messages.
