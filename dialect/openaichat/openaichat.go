@@ -307,7 +307,8 @@ func (m *model) send(ctx context.Context, body *chatRequest) (*http.Response, er
 		return nil, err
 	}
 	// A deployment that was stopped or replaced answers 404: find the
-	// current one and send once more.
+	// current one and send once more (at most once per sapRefindEvery;
+	// otherwise the 404 is the answer).
 	if m.sap != nil && resp.StatusCode == http.StatusNotFound {
 		notFound := m.apiError(resp)
 		_ = resp.Body.Close()

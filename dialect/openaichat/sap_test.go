@@ -24,6 +24,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"google.golang.org/genai"
 
@@ -357,22 +358,76 @@ func TestSAPStreamingRequest(t *testing.T) {
 	}
 }
 
-// The template is rendered for {{?name}} placeholders, so a newest
-// message holding one is refused before anything is sent; in history it
-// passes through untouched.
+// The template is rendered for {{?name}} placeholders, so a literal
+// "{{?" in the newest message is sent as a placeholder whose value is
+// "{{?" itself, and history passes through untouched. Refusing it
+// instead would stall an agent whose newest message is a tool result
+// quoting a template.
 func TestSAPPlaceholderInTheNewestMessage(t *testing.T) {
-	f := newFakeSAP(t, sapReply{body: sapHello})
+	f := newFakeSAP(t, sapReply{body: sapHello}, sapReply{body: sapHello})
 	f.deployments = []map[string]any{f.deployment("d1", "2026-01-01T00:00:00Z")}
 	c := sapClient(t, f, nil)
-	err := generateErr(c.Model("gpt-4o"), &llm.Request{Contents: []*genai.Content{userText("render {{?name}} please")}}, false)
-	if err == nil || !strings.Contains(err.Error(), "placeholder") || len(f.paths) != 0 {
-		t.Fatalf("err = %v, sent %d", err, len(f.paths))
+	complete(t, c.Model("gpt-4o"), &llm.Request{Contents: []*genai.Content{userText("render {{?name}} and {{?x}} please")}})
+	b := f.body(0)
+	tmpl, _ := dig(b, "config", "modules", "prompt_templating", "prompt", "template").([]any)
+	if got := dig(tmpl[0], "content"); got != "render {{?core_models_open}}name}} and {{?core_models_open}}x}} please" {
+		t.Errorf("template content = %v", got)
 	}
+	if pv, _ := b["placeholder_values"].(map[string]any); pv["core_models_open"] != "{{?" {
+		t.Errorf("placeholder_values = %v", b["placeholder_values"])
+	}
+
 	complete(t, c.Model("gpt-4o"), &llm.Request{Contents: []*genai.Content{
 		userText("render {{?name}} please"), {Role: genai.RoleModel, Parts: []*genai.Part{{Text: "sure"}}}, userText("go on"),
 	}})
-	if hist, _ := f.body(0)["messages_history"].([]any); dig(hist[0], "content") != "render {{?name}} please" {
+	b = f.body(1)
+	if hist, _ := b["messages_history"].([]any); dig(hist[0], "content") != "render {{?name}} please" {
 		t.Errorf("history = %v", hist)
+	}
+	if _, set := b["placeholder_values"]; set {
+		t.Errorf("placeholder_values sent with nothing to escape: %v", b["placeholder_values"])
+	}
+}
+
+// A 404 sends the client back to the deployment list at most once per
+// interval: a 404 for another reason must not cost a list call per
+// request.
+func TestSAPRefindIsThrottled(t *testing.T) {
+	f := newFakeSAP(t)
+	f.deployments = []map[string]any{f.deployment("d1", "2026-01-01T00:00:00Z")}
+	f.gone["d1"] = true
+	c := sapClient(t, f, nil)
+	m := c.Model("gpt-4o")
+	req := &llm.Request{Contents: []*genai.Content{userText("hi")}}
+	for range 3 {
+		var ae *openaichat.APIError
+		if err := generateErr(m, req, false); !errors.As(err, &ae) || ae.StatusCode != 404 {
+			t.Fatalf("err = %v", err)
+		}
+	}
+	if len(f.listQueries) != 2 {
+		t.Errorf("list calls = %d, want 2 (the first lookup and one refind)", len(f.listQueries))
+	}
+}
+
+// A caller waiting on a slow lookup gives up at its own deadline; the
+// lookup carries on for the others.
+func TestSAPLookupHonorsTheCallersContext(t *testing.T) {
+	release := make(chan struct{})
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-release
+		_, _ = io.WriteString(w, `{"resources":[]}`)
+	}))
+	t.Cleanup(slow.Close)
+	t.Cleanup(func() { close(release) })
+	c, err := openaichat.New(openaichat.Options{BaseURL: slow.URL + "/v2", Platform: openaichat.PlatformSAPOrchestration})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if err := c.Connect(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Connect = %v, want the caller's deadline", err)
 	}
 }
 

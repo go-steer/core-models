@@ -158,11 +158,6 @@ func Open(ctx context.Context, p profile.Profile, opts Options) (Provider, error
 	return nil, fmt.Errorf("profile %q: unknown dialect %q", rp.Name, rp.Dialect)
 }
 
-// withProfileHeaders returns hc with the profile's headers set on every
-// request, as the base transport each dialect builds its credential and
-// retry layers over, so every attempt carries them. hc itself when the
-// profile has none; a nil hc stands for the zero client every dialect
-// defaults to.
 // sapDeploymentID is the deployment_id param on the sap-orchestration
 // platform, where it pins SAP AI Core's deployment; "" elsewhere, where
 // a param of that name only fills a base_url placeholder.
@@ -173,6 +168,11 @@ func sapDeploymentID(r *profile.Resolved) string {
 	return r.Params["deployment_id"]
 }
 
+// withProfileHeaders returns hc with the profile's headers set on every
+// request, as the base transport each dialect builds its credential and
+// retry layers over, so every attempt carries them. hc itself when the
+// profile has none; a nil hc stands for the zero client every dialect
+// defaults to.
 func withProfileHeaders(r *profile.Resolved, hc *http.Client) *http.Client {
 	if len(r.HeaderNames()) == 0 {
 		return hc

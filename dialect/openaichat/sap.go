@@ -34,6 +34,7 @@ package openaichat
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -41,6 +42,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -60,14 +62,33 @@ const sapModulesKey = "modules"
 // sapScenario is the scenario every orchestration deployment runs.
 const sapScenario = "orchestration"
 
+const (
+	// sapLookupTimeout bounds one deployment lookup, which runs detached
+	// from any one caller, since every caller waiting on it shares it.
+	sapLookupTimeout = time.Minute
+	// sapRefindEvery is how often a 404 may send the client back to the
+	// deployment list. A 404 orchestration gives for another reason (an
+	// unknown resource) would otherwise cost a list call per request.
+	sapRefindEvery = 30 * time.Second
+)
+
 // sapDeployment finds and remembers the orchestration deployment's
 // completion URL.
 type sapDeployment struct {
 	api    *url.URL // the AI API root, ".../v2"
 	pinned string   // a deployment id to use rather than the newest
 
-	mu  sync.Mutex
-	url string // POST target; "" until found
+	mu       sync.Mutex
+	url      string     // POST target; "" until found
+	refound  time.Time  // when a 404 last sent us back to the list
+	inflight *sapLookup // the lookup every caller arriving now waits on
+}
+
+// sapLookup is one deployment lookup and its result.
+type sapLookup struct {
+	done chan struct{}
+	url  string
+	err  error
 }
 
 func newSAPDeployment(base, pinned string) (*sapDeployment, error) {
@@ -81,20 +102,53 @@ func newSAPDeployment(base, pinned string) (*sapDeployment, error) {
 // endpoint returns the completion URL, finding the deployment on first
 // use. stale, when not "", is a URL the server answered 404 at: it is
 // forgotten and the deployment found again, unless another request has
-// already done so.
+// already done so or one did within sapRefindEvery (then stale itself
+// comes back, and the caller reports its 404).
+//
+// The lookup runs on its own goroutine and callers wait on it with
+// their own contexts, so a slow AI API holds up no caller past its
+// deadline and no lock is held across the network call.
 func (d *sapDeployment) endpoint(ctx context.Context, hc *http.Client, stale string) (string, error) {
 	d.mu.Lock()
-	defer d.mu.Unlock()
 	if d.url != "" && (stale == "" || d.url != stale) {
-		return d.url, nil
+		u := d.url
+		d.mu.Unlock()
+		return u, nil
 	}
-	d.url = ""
-	u, err := d.find(ctx, hc)
-	if err != nil {
-		return "", err
+	if stale != "" && d.url == stale {
+		if time.Since(d.refound) < sapRefindEvery {
+			d.mu.Unlock()
+			return stale, nil
+		}
+		d.refound = time.Now()
+		d.url = ""
 	}
-	d.url = u
-	return u, nil
+	call := d.inflight
+	if call == nil {
+		call = &sapLookup{done: make(chan struct{})}
+		d.inflight = call
+		go d.lookup(context.WithoutCancel(ctx), hc, call)
+	}
+	d.mu.Unlock()
+	select {
+	case <-call.done:
+		return call.url, call.err
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+}
+
+func (d *sapDeployment) lookup(ctx context.Context, hc *http.Client, call *sapLookup) {
+	ctx, cancel := context.WithTimeout(ctx, sapLookupTimeout)
+	defer cancel()
+	call.url, call.err = d.find(ctx, hc)
+	d.mu.Lock()
+	if call.err == nil {
+		d.url = call.url
+	}
+	d.inflight = nil
+	d.mu.Unlock()
+	close(call.done)
 }
 
 // sapDeploymentRecord is the part of an AI API deployment the dialect
@@ -223,22 +277,28 @@ func toSAPMessage(m message) sapMessage {
 // sapPlaceholder opens an orchestration template placeholder.
 const sapPlaceholder = "{{?"
 
+// sapOpenName is the placeholder that stands in for a literal "{{?" in
+// the template message; placeholder_values maps it back.
+const sapOpenName = "core_models_open"
+
 // sapEncode wraps body in orchestration's envelope. The conversation
 // goes to messages_history, which orchestration passes through as it
 // stands, and only the newest message to prompt.template, which it
 // renders: a template must hold at least one message, and tools and
-// the response format live beside it. The template is rendered for
-// {{?name}} placeholders, so a newest message containing one is refused
-// rather than sent to be rewritten.
+// the response format live beside it.
+//
+// The template is rendered for {{?name}} placeholders. A literal "{{?"
+// in the newest message (a tool result quoting an SAP template, say) is
+// written as the placeholder {{?core_models_open}}, whose value is
+// "{{?", so it renders back to itself; refusing it instead would stall
+// an agent whose newest message is that tool result on every retry.
 func sapEncode(body *chatRequest, extra map[string]any) ([]byte, error) {
 	if len(body.Messages) == 0 {
 		return nil, errors.New("openai-chat: sap-orchestration: the request has no messages")
 	}
-	last := body.Messages[len(body.Messages)-1]
-	if hasSAPPlaceholder(last.Content) {
-		return nil, fmt.Errorf("openai-chat: sap-orchestration: the newest message contains %q, which orchestration's template would read as a placeholder; the request is refused rather than sent to be rewritten", sapPlaceholder)
-	}
-	prompt := map[string]any{"template": []sapMessage{toSAPMessage(last)}}
+	last := toSAPMessage(body.Messages[len(body.Messages)-1])
+	escaped := escapeSAPPlaceholders(&last)
+	prompt := map[string]any{"template": []sapMessage{last}}
 	if len(body.Tools) > 0 {
 		prompt["tools"] = body.Tools
 	}
@@ -296,6 +356,9 @@ func sapEncode(body *chatRequest, extra map[string]any) ([]byte, error) {
 		config["stream"] = map[string]any{"enabled": true}
 	}
 	req := map[string]any{"config": config}
+	if escaped {
+		req["placeholder_values"] = map[string]string{sapOpenName: sapPlaceholder}
+	}
 	if hist := body.Messages[:len(body.Messages)-1]; len(hist) > 0 {
 		out := make([]sapMessage, len(hist))
 		for i, m := range hist {
@@ -310,18 +373,30 @@ func sapEncode(body *chatRequest, extra map[string]any) ([]byte, error) {
 	return raw, nil
 }
 
-// hasSAPPlaceholder reports whether a message content (a string or a
-// list of parts) contains a template placeholder's opening.
-func hasSAPPlaceholder(content any) bool {
-	switch c := content.(type) {
+// escapeSAPPlaceholders rewrites every "{{?" in m's content (a string
+// or a list of parts) as the sapOpenName placeholder, and reports
+// whether it found any. A part list is copied, never edited in place.
+func escapeSAPPlaceholders(m *sapMessage) bool {
+	esc := "{{?" + sapOpenName + "}}"
+	switch c := m.Content.(type) {
 	case string:
-		return strings.Contains(c, sapPlaceholder)
+		if strings.Contains(c, sapPlaceholder) {
+			m.Content = strings.ReplaceAll(c, sapPlaceholder, esc)
+			return true
+		}
 	case []contentPart:
-		for _, p := range c {
-			if strings.Contains(p.Text, sapPlaceholder) {
-				return true
+		found := false
+		parts := slices.Clone(c)
+		for i := range parts {
+			if strings.Contains(parts[i].Text, sapPlaceholder) {
+				parts[i].Text = strings.ReplaceAll(parts[i].Text, sapPlaceholder, esc)
+				found = true
 			}
 		}
+		if found {
+			m.Content = parts
+		}
+		return found
 	}
 	return false
 }
@@ -349,10 +424,14 @@ type sapRespMsg struct {
 	Refusal          *string        `json:"refusal"`
 	ToolCalls        []respToolCall `json:"tool_calls"`
 	ReasoningContent sapReasoning   `json:"reasoning_content"`
+	// Reasoning is the other spelling OpenAI-shaped servers use, read as
+	// the standard path reads it, in case a model family behind
+	// orchestration passes it through.
+	Reasoning *string `json:"reasoning"`
 }
 
 func (m sapRespMsg) chat() respMessage {
-	return respMessage{Content: m.Content, Refusal: m.Refusal, ToolCalls: m.ToolCalls, ReasoningContent: m.ReasoningContent.text}
+	return respMessage{Content: m.Content, Refusal: m.Refusal, ToolCalls: m.ToolCalls, ReasoningContent: m.ReasoningContent.text, Reasoning: m.Reasoning}
 }
 
 // sapReasoning reads reasoning_content: a list of {content, signature}
@@ -418,7 +497,7 @@ func sapComplete(r io.Reader) (*chatResponse, error) {
 	if res == nil {
 		return nil, errors.New("openai-chat: sap-orchestration: the response has no final_result")
 	}
-	cr := &chatResponse{ID: firstNonEmpty(env.RequestID, res.ID), Model: res.Model, Usage: res.Usage}
+	cr := &chatResponse{ID: cmp.Or(env.RequestID, res.ID), Model: res.Model, Usage: res.Usage}
 	for _, ch := range res.Choices {
 		c := choice{Index: ch.Index, Message: ch.Message.chat()}
 		if ch.FinishReason != nil {
@@ -525,13 +604,4 @@ func sapCode(raw json.RawMessage) string {
 		return s
 	}
 	return strconv.Quote(string(raw))
-}
-
-func firstNonEmpty(ss ...string) string {
-	for _, s := range ss {
-		if s != "" {
-			return s
-		}
-	}
-	return ""
 }

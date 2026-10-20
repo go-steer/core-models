@@ -172,8 +172,11 @@ type Profile struct {
 	derive func(params map[string]string)
 	// env wraps the environment Resolve reads, for a built-in whose
 	// users already hold their settings in another shape (sap-ai-core's
-	// service key). Only built-ins set it.
-	env func(getenv func(string) string) (func(string) string, error)
+	// service key). It sees one view of the environment, Options.Auth's
+	// Getenv laid over Options' own, and its result serves both, so the
+	// URLs and the credential always come from the same source. Only
+	// built-ins set it.
+	env func(p Profile, getenv func(string) string) (func(string) string, error)
 }
 
 // Model is one model a profile serves.
@@ -428,11 +431,11 @@ func (p Profile) Validate() error {
 	case p.BaseURL != "":
 		// Placeholders and ${VAR}s are filled at Resolve; stand a "0" in
 		// for each so the shape check holds wherever they sit, the port
-		// included. A base_url that starts with ${VAR} is a whole URL
-		// from the environment (sap-ai-core's AICORE_BASE_URL), checked
-		// at Resolve once it is read.
+		// included. A base_url that is nothing but a ${VAR} is a whole
+		// URL from the environment (sap-ai-core's AICORE_BASE_URL),
+		// checked at Resolve once it is read.
 		shape := placeholderRE.ReplaceAllString(stripEnv(p.BaseURL), "0")
-		if strings.HasPrefix(p.BaseURL, "${") {
+		if wholeEnvRef(p.BaseURL) {
 			shape = "https://0"
 		}
 		if err := checkURL(shape); err != nil {
@@ -519,6 +522,17 @@ func (p Profile) Validate() error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// wholeEnvRef reports whether s is one ${VAR} or ${VAR:-default}
+// reference and nothing else: a whole URL from the environment, whose
+// shape can only be checked once it is read.
+func wholeEnvRef(s string) bool {
+	if !strings.HasPrefix(s, "${") {
+		return false
+	}
+	_, _, _, n, ok := parseEnvRef(s)
+	return ok && n == len(s)
 }
 
 func (p Profile) derives(param string) bool {

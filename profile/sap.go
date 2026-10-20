@@ -26,6 +26,9 @@ import (
 // The variables SAP's SDKs and LiteLLM's sap provider read, so a user
 // who already has them set needs nothing else.
 const (
+	// sapBaseURL is the built-in's base_url: AICORE_BASE_URL, which the
+	// service key can stand in for.
+	sapBaseURL         = "${" + sapBaseURLEnv + "}"
 	sapServiceKeyEnv   = "AICORE_SERVICE_KEY"
 	sapAuthURLEnv      = "AICORE_AUTH_URL"
 	sapClientIDEnv     = "AICORE_CLIENT_ID"
@@ -53,7 +56,7 @@ var sapAICore = Profile{
 	Dialect:  OpenAIChat,
 	Platform: PlatformSAPOrchestration,
 	Backend:  "sap-ai-core",
-	BaseURL:  "${" + sapBaseURLEnv + "}",
+	BaseURL:  sapBaseURL,
 	Params:   map[string]string{"deployment_id": "${AICORE_DEPLOYMENT_ID:-}"},
 	Auth: auth.Config{
 		Kind:            auth.OAuth2ClientCredentials,
@@ -84,7 +87,7 @@ var sapAICore = Profile{
 // naming them: LiteLLM silently takes the first source that has any
 // value, and a stale discrete variable shadowing a fresh key (or the
 // reverse) is the kind of mix-up that costs an afternoon.
-func sapEnv(getenv func(string) string) (func(string) string, error) {
+func sapEnv(p Profile, getenv func(string) string) (func(string) string, error) {
 	discrete := []string{sapAuthURLEnv, sapClientIDEnv, sapClientSecretEnv, sapBaseURLEnv}
 	var set []string
 	for _, name := range discrete {
@@ -92,8 +95,15 @@ func sapEnv(getenv func(string) string) (func(string) string, error) {
 			set = append(set, name)
 		}
 	}
+	raw := getenv(sapServiceKeyEnv)
+	// With nothing set, name both shapes; Resolve alone would name only
+	// AICORE_BASE_URL. Not when a derived profile has its own base_url,
+	// which may need none of these.
+	if raw == "" && len(set) == 0 && p.BaseURL == sapBaseURL {
+		return nil, fmt.Errorf("set %s (SAP's service key JSON), or %s", sapServiceKeyEnv, strings.Join(discrete, ", "))
+	}
 	values := map[string]string{}
-	if raw := getenv(sapServiceKeyEnv); raw != "" {
+	if raw != "" {
 		if len(set) > 0 {
 			return nil, fmt.Errorf("%s and %s are both set: use the service key or the discrete variables, not both", sapServiceKeyEnv, strings.Join(set, ", "))
 		}

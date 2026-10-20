@@ -410,15 +410,22 @@ corpus).
   (with the `AI-Resource-Group` header) and posts to the newest one's
   `{deploymentUrl}/v2/completion`, so a resource group without one fails at
   construction (R1). `deployment_id` pins one, which must be RUNNING. A 404
-  finds the deployment again and resends once. A deployment URL on another
+  finds the deployment again and resends once, at most once per 30 s, so a
+  404 for another reason does not cost a list call per request. The lookup
+  runs detached and each caller waits on it with its own context. A
+  deployment URL on another
   host than the AI API's is refused, since the bearer token goes wherever it
   points.
 - **Request.** The conversation goes to `messages_history`, which
   orchestration passes through as it stands, and only the newest message to
   `prompt_templating.prompt.template`, which it renders for `{{?name}}`
   placeholders. A template must hold a message, and `tools` and
-  `response_format` live beside it. A newest message containing `{{?` is
-  refused rather than sent to be rewritten. Sampling settings and
+  `response_format` live beside it. A literal `{{?` in the newest message
+  (a tool result quoting an SAP template, say) is sent as the placeholder
+  `{{?core_models_open}}` with `placeholder_values` mapping it back to
+  `{{?`; refusing it would stall an agent on every retry. Whether
+  orchestration renders a placeholder value without re-rendering it is
+  one of the things a real tenant has to confirm. Sampling settings and
   `tool_choice` go to `model.params` (`tool_choice` is not in the template
   schema; SAP's SDK passes it the same way, and the model's provider honors it
   or not). Streaming sets `config.stream.enabled` and

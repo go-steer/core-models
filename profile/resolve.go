@@ -462,16 +462,25 @@ func Resolve(ctx context.Context, p Profile, opts Options) (*Resolved, error) {
 		return fmt.Errorf("profile %q: "+format, append([]any{p.Name}, args...)...)
 	}
 	authGetenv := opts.Auth.Getenv
+	if p.env != nil {
+		src := getenv
+		if authGetenv != nil {
+			base, overlay := getenv, authGetenv
+			src = func(name string) string {
+				if v := overlay(name); v != "" {
+					return v
+				}
+				return base(name)
+			}
+		}
+		wrapped, err := p.env(p, src)
+		if err != nil {
+			return nil, fail("%w", err)
+		}
+		getenv, authGetenv = wrapped, wrapped
+	}
 	if authGetenv == nil {
 		authGetenv = getenv
-	}
-	if p.env != nil {
-		if getenv, err = p.env(getenv); err != nil {
-			return nil, fail("%w", err)
-		}
-		if authGetenv, err = p.env(authGetenv); err != nil {
-			return nil, fail("%w", err)
-		}
 	}
 
 	params := map[string]string{}

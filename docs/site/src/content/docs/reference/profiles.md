@@ -184,9 +184,9 @@ which is merged into the request's `config.modules`; every other
 Two limits to know about:
 
 - The newest message in a request is rendered by orchestration's template
-  for `{{?name}}` placeholders, so a newest message containing `{{?` is
-  refused rather than sent to be rewritten. Earlier messages pass through
-  untouched.
+  for `{{?name}}` placeholders. A literal `{{?` in it is sent as a
+  placeholder whose value is `{{?`, so it should come back as written;
+  earlier messages pass through untouched.
 - SAP bills in capacity units, and core-models ships no `sap-ai-core`
   prices. A model whose id matches a first-party row without a backend
   prefix (`gemini-2.5-pro`) is estimated at that list price by the

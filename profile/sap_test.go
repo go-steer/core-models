@@ -165,11 +165,46 @@ func TestSAPServiceKeyErrors(t *testing.T) {
 	}
 }
 
-// With neither shape set, the error names a variable to set.
+// With neither shape set, the error names both.
 func TestSAPNothingSet(t *testing.T) {
 	_, err := resolve(t, sapProfile(t), map[string]string{})
-	if err == nil || !strings.Contains(err.Error(), "AICORE_BASE_URL is not set") {
+	if err == nil || !strings.Contains(err.Error(), "set AICORE_SERVICE_KEY (SAP's service key JSON), or AICORE_AUTH_URL, AICORE_CLIENT_ID, AICORE_CLIENT_SECRET, AICORE_BASE_URL") {
 		t.Fatalf("Resolve = %v", err)
+	}
+}
+
+// When the credential comes from a separate source (Options.Auth's
+// Getenv, a secret store), the service-key hook sees both at once: a
+// key in one and a stale discrete variable in the other is still the
+// conflict it is in one environment.
+func TestSAPOneViewAcrossSources(t *testing.T) {
+	p := sapProfile(t)
+	opts := profile.Options{
+		Getenv: env(map[string]string{"AICORE_SERVICE_KEY": serviceKey("https://idp.example.com", false)}),
+		Auth:   noADC,
+	}
+	opts.Auth.Getenv = env(map[string]string{"AICORE_CLIENT_ID": "old-binding"})
+	_, err := profile.Resolve(t.Context(), p, opts)
+	if err == nil || !strings.Contains(err.Error(), "AICORE_SERVICE_KEY and AICORE_CLIENT_ID are both set") {
+		t.Fatalf("Resolve = %v", err)
+	}
+}
+
+// Only a base_url that is nothing but a ${VAR} skips the shape check.
+func TestBaseURLShapeStillCheckedAroundEnvRefs(t *testing.T) {
+	for _, tc := range []struct {
+		base string
+		ok   bool
+	}{
+		{"${HOST_URL}", true},
+		{"${HOST_URL:-https://x.example.com/v1}", true},
+		{"${HOST}:8000/v1", false},
+	} {
+		p := profile.Profile{Name: "x", Extends: "openai-compatible", BaseURL: tc.base}
+		p, _ = profile.Expand(p)
+		if err := p.Validate(); (err == nil) != tc.ok {
+			t.Errorf("Validate(base_url %q) = %v, want ok=%v", tc.base, err, tc.ok)
+		}
 	}
 }
 
