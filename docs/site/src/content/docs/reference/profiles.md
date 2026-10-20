@@ -44,6 +44,7 @@ A self-hosted vLLM server, starting from the built-in `vllm` template:
 | `auth.client_auth` | `oauth2_client_credentials`: `basic` (HTTP Basic, the default) or `post` (id and secret in the form body) |
 | `headers` | Headers sent on every request to the model endpoint, for a gateway that needs one that isn't the credential: SAP AI Core's `AI-Resource-Group`, an API-management subscription key, a tenant or routing header, an `anthropic-beta` opt-in. Values may be `${VAR}` or `${VAR:-default}`, read at Resolve; a header whose value comes out empty isn't sent. Credentials (`Authorization`, `x-api-key`, `api-key`, `x-goog-api-key`, `x-goog-user-project`) and the headers the dialects set (`Content-Type`, `Accept`, `User-Agent`, `anthropic-version`, …) are refused. Names are case-insensitive and sent in canonical form. See [Headers](#headers) |
 | `backend` | The name prices are keyed on. Defaults to `name`, except that a profile extending `vertex-maas`, `gemini` or `vertex` keeps the built-in's |
+| `pricing` | `isolated` for a backend that bills in its own units: prices come only from rows keyed `<backend>/<model>` (declared `models[].rates`, or such a row in `pricing.json`), never from a model's first-party list price. Set on `sap-ai-core` and inherited; `shared` (the default) undoes it. The catalog applies built-in profiles' settings itself, and yours when the product passes your profiles in `pricing.Options.Profiles` |
 | `open_models` | Accept any model id, not only the listed ones. Set on every self-hosted template |
 | `capabilities` | `response_schema`, `reasoning_echo`, `parallel_tool_calls`, `server_tools`, `streaming`, `forced_tool_choice`. Each is true, false, or unset. Unset reads as absent, except `forced_tool_choice`, which is assumed supported unless declared false |
 | `usage.cached_tokens` | `unreliable` records cached tokens as not reported even when the server sends them |
@@ -188,11 +189,10 @@ Two limits to know about:
   placeholder whose value is `{{?`, so it should come back as written;
   earlier messages pass through untouched.
 - SAP bills in capacity units, and core-models ships no `sap-ai-core`
-  prices. A model whose id matches a first-party row without a backend
-  prefix (`gemini-2.5-pro`) is estimated at that list price by the
-  catalog's fallback; others (`gpt-5-mini`, priced only as `openai/…`, and
-  SAP's own spellings such as `anthropic--claude-…`) are unpriced. Declare
-  `models[].rates` for your contract rate.
+  prices. The profile sets `pricing: isolated`, so no first-party list
+  price applies either: every model is unpriced until you declare
+  `models[].rates` (or a `sap-ai-core/<model>` row in `pricing.json`) with
+  your contract rate.
 
 The request and response shapes follow SAP's Orchestration v2 API
 specification and SAP's Cloud SDK for AI, and are tested against a fake

@@ -264,6 +264,10 @@ type Catalog struct {
 	builtin     map[string]Rates // compiled-in fallback
 	declared    map[string]Rates // provider profiles' declared rates
 
+	// isolated holds the backends priced only from their own rows: the
+	// built-in profiles' isolated backends, adjusted by Options.Profiles.
+	isolated map[string]bool
+
 	layers []layerWithSource // the maps above, in precedence order
 }
 
@@ -340,6 +344,12 @@ func (c *Catalog) LookupFor(backend, modelID string) (Rates, bool) {
 // id with its own bare row is never billed at a qualified family
 // prefix. Within one layer, qualified beats bare at the same phase,
 // which is the point of a qualified key.
+//
+// An isolated backend (a built-in or Options.Profiles profile with
+// pricing "isolated", such as sap-ai-core) skips every bare key, in
+// every layer and both phases: only "<backend>/<model>" rows price it.
+// A gateway that bills in its own units would otherwise be billed at
+// the first-party list price of every model it also offers.
 func (c *Catalog) LookupForWithSource(backend, modelID string) (Rates, string, bool) {
 	if c == nil {
 		return Rates{}, "", false
@@ -353,6 +363,7 @@ func (c *Catalog) LookupForWithSource(backend, modelID string) (Rates, string, b
 	if backend != "" {
 		qual = backend + "/" + bare
 	}
+	useBare := !c.isIsolated(backend)
 	layers := c.layersWithSource()
 	for _, ls := range layers {
 		if qual != "" {
@@ -360,8 +371,10 @@ func (c *Catalog) LookupForWithSource(backend, modelID string) (Rates, string, b
 				return r, ls.source, true
 			}
 		}
-		if r, ok := ls.layer[bare]; ok {
-			return r, ls.source, true
+		if useBare {
+			if r, ok := ls.layer[bare]; ok {
+				return r, ls.source, true
+			}
 		}
 	}
 	for _, ls := range layers {
@@ -370,8 +383,10 @@ func (c *Catalog) LookupForWithSource(backend, modelID string) (Rates, string, b
 				return r, ls.source, true
 			}
 		}
-		if r, ok := longestPrefix(ls.layer, bare, 0); ok {
-			return r, ls.source, true
+		if useBare {
+			if r, ok := longestPrefix(ls.layer, bare, 0); ok {
+				return r, ls.source, true
+			}
 		}
 	}
 	return Rates{}, "", false

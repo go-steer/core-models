@@ -448,13 +448,12 @@ corpus).
 - **Errors.** `{"error": {code, message, location}}`, or a list of them (one
   per module configuration tried), over HTTP or as a stream event. `Code` is
   the numeric code and `Type` the failing module.
-- **Pricing.** `Backend` is `sap-ai-core`, and core-models ships no
-  `sap-ai-core/…` rows: SAP bills in its capacity units. `LookupFor`'s bare
-  fallback still estimates a SAP model whose id matches a bare first-party
-  row (`gemini-2.5-pro`) at that list price; one priced only under its
-  vendor's backend (`gpt-5-mini`, an `openai/` row) and SAP's own spellings
-  (`anthropic--claude-…`) are unpriced. An operator who wants their contract
-  rate declares `models[].rates`.
+- **Pricing.** `Backend` is `sap-ai-core`, with `pricing: isolated`, and
+  core-models ships no `sap-ai-core/…` rows: SAP bills in its capacity
+  units. An isolated backend is priced only from `<backend>/<model>` rows
+  (§9), so no SAP model inherits a first-party list price, `gemini-2.5-pro`
+  included. An operator who wants their contract rate declares
+  `models[].rates`.
 
 ### 7.2 `openai-responses` (L2)
 
@@ -760,6 +759,17 @@ Choices the design left open:
   wired in mast that changes no price for any id in today's table, but it inverts
   precedence as soon as an override layer is. The prefix search probes the
   layer map once per candidate length rather than scanning every key.
+- **Isolated backends.** A profile with `pricing: isolated` (the built-in
+  `sap-ai-core`) names a backend that bills in its own units. `LookupFor`
+  skips every bare key for it, in both phases and every layer, so only
+  `<backend>/<model>` rows price it: declared rates, or an operator's
+  qualified row. Without it, the bare fallback billed a gateway's traffic at
+  the first-party list price of any model it also offers. The catalog reads
+  the built-in profiles' setting itself. Operator profiles reach it through
+  `Options.Profiles`, which also carries their declared rates, so one input
+  feeds both (a product passing only `Declared` would silently lose
+  isolation). A passed profile can set a built-in's backend back to
+  `shared`; two passed profiles on one backend that disagree are refused.
 - **The regen's prefix table** is per backend: bare `claude-*` is
   `anthropic`, `vertex_ai/claude-*` is `anthropic-vertex`, `gemini/` is
   `gemini`, bare `gemini-*` is `vertex`, `vertex_ai/<publisher>/<model>-maas`

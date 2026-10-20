@@ -313,6 +313,9 @@ func Expand(p Profile) (Profile, error) {
 	if p.Backend != "" {
 		out.Backend = p.Backend
 	}
+	if p.Pricing != "" {
+		out.Pricing = p.Pricing
+	}
 	if p.Dialect != "" {
 		out.Dialect = p.Dialect
 	}

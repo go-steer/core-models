@@ -47,8 +47,10 @@ const (
 // group, "default" when unset; AICORE_DEPLOYMENT_ID pins a deployment
 // instead of finding the newest running one.
 //
-// Backend is its own: SAP bills in its capacity units, not per-token
-// list prices, and core-models ships no sap-ai-core rows. Capabilities
+// Backend is its own and its pricing isolated: SAP bills in its
+// capacity units, not per-token list prices, and core-models ships no
+// sap-ai-core rows, so a gpt-5-mini through SAP is unpriced rather than
+// billed at OpenAI's list price until the operator declares a rate. Capabilities
 // are the conservative floor, since they depend on the model family
 // behind orchestration; an operator declares more per model.
 var sapAICore = Profile{
@@ -56,6 +58,7 @@ var sapAICore = Profile{
 	Dialect:  OpenAIChat,
 	Platform: PlatformSAPOrchestration,
 	Backend:  "sap-ai-core",
+	Pricing:  PricingIsolated,
 	BaseURL:  sapBaseURL,
 	Params:   map[string]string{"deployment_id": "${AICORE_DEPLOYMENT_ID:-}"},
 	Auth: auth.Config{

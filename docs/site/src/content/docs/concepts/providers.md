@@ -163,6 +163,13 @@ fails at startup. Models are SAP's names for them, such as
 `extra_body.modules`; the [profiles reference](/reference/profiles/#sap-ai-core)
 has the details and the limits.
 
+SAP bills in its capacity units, so the profile's pricing is isolated: a
+model you reach through it is unpriced unless you declare a rate, even one
+with a published first-party price such as `gemini-2.5-pro`. Declare
+`models[].rates` with your contract rate. A product that enforces a cost
+ceiling (core-agent's, for one) will ask you to before it runs SAP traffic
+under one. See [pricing](/concepts/pricing/#gateways-that-bill-in-their-own-units).
+
 :::caution[Not yet validated against a real tenant]
 The envelope follows SAP's Orchestration v2 API specification and SAP's
 Cloud SDK for AI, and passes the shared conformance scenarios against a

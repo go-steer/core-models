@@ -75,6 +75,29 @@ The compiled-in table carries both: bare rows for the Gemini and Claude
 models, and qualified rows for every backend that serves them, plus the
 Vertex AI partner models, OpenAI and xAI, which only have qualified rows.
 
+### Gateways that bill in their own units
+
+Some backends don't charge the model's list price at all. SAP AI Core bills
+in its own capacity units, whichever model you call through it. A profile
+for such a backend sets `pricing: isolated`, and `LookupFor` then reads only
+`<backend>/<model>` rows for it, in every layer, and never a bare row. So
+`gemini-2.5-pro` through `sap-ai-core` is unpriced instead of being billed
+at Vertex's rate, and a bare `gpt-5-mini` override you wrote for OpenAI
+doesn't reach it either. The built-in `sap-ai-core` profile is isolated,
+and so is any profile extending it that keeps its backend; the catalog
+knows the built-ins without being told.
+
+Your own profiles count when the product passes them to the catalog as
+`Options.Profiles`. The catalog expands each, takes its declared rates (as
+`DeclaredFromProfiles` does) and its pricing mode. So a profile extending
+`sap-ai-core` under its own backend stays isolated, a gateway profile of
+your own can set `pricing: isolated`, and one that keeps `sap-ai-core`'s
+backend can set `pricing: shared` to undo it. Two profiles on one backend
+that disagree are an error, because prices are keyed by backend.
+
+To price an isolated backend, declare `models[].rates` in its profile, or
+key a row `sap-ai-core/<model>` in `pricing.json`.
+
 ### Self-hosted models and declared rates
 
 A self-hosted model has no published price, so it's unpriced unless the

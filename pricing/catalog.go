@@ -16,7 +16,11 @@
 
 package pricing
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/go-steer/core-models/profile"
+)
 
 // Options bundle the inputs NewCatalog needs to assemble the
 // layered view. All fields are optional — an empty Options yields
@@ -46,6 +50,19 @@ type Options struct {
 	// DeclaredFromProfiles, which keys each row "<backend>/<model>" so
 	// LookupFor scopes it to the profile that declared it.
 	Declared map[string]ModelRates
+
+	// Profiles are the provider profiles the product declares. NewCatalog
+	// expands each (profile.Expand) and reads two things from it: the
+	// rates it declares (models[].rates), added to Declared as
+	// DeclaredFromProfiles would; and its pricing mode. A backend whose
+	// profile sets pricing "isolated" is priced only from rows keyed
+	// "<backend>/<model>", never from a model's bare row: a gateway that
+	// bills in its own units. The built-in profiles' modes apply without
+	// being passed (sap-ai-core is isolated); a profile passed here that
+	// keeps a built-in's backend and sets pricing "shared" undoes it. Two
+	// profiles on one backend that disagree are an error, since the
+	// catalog prices by backend and cannot tell them apart.
+	Profiles []profile.Profile
 }
 
 // NewCatalog reads every configured source and returns the merged
@@ -67,6 +84,9 @@ func NewCatalog(opts Options) (*Catalog, error) {
 		cfgOverride: lowerKeys(opts.CfgOverride),
 		builtin:     mergeLowerRates(builtin, builtinByBackend),
 		declared:    lowerKeys(opts.Declared),
+	}
+	if err := c.applyProfiles(opts.Profiles); err != nil {
+		return nil, err
 	}
 
 	if opts.AgentsDir != "" {

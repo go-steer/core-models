@@ -139,6 +139,14 @@ type Profile struct {
 	// Backend is the identity prices are keyed on, beside the model id.
 	// Defaults to Name.
 	Backend string `json:"backend,omitempty" yaml:"backend,omitempty"`
+	// Pricing says whether published list prices apply to Backend.
+	// "isolated" is for a gateway that bills in its own units (SAP AI
+	// Core's capacity units): package pricing then prices the backend
+	// only from rows keyed "<backend>/<model>", never from a model's
+	// first-party or bare row. Unset inherits; "shared" is the default.
+	// pricing honors built-in profiles' modes on its own, and a
+	// product's profiles once they are passed in pricing.Options.Profiles.
+	Pricing PricingMode `json:"pricing,omitempty" yaml:"pricing,omitempty"`
 	// OpenModels admits any model id, not only those in Models: a
 	// self-hosted server serves whatever weights the operator loaded.
 	OpenModels *bool `json:"open_models,omitempty" yaml:"open_models,omitempty"`
@@ -341,6 +349,24 @@ func (m MetricsFormat) known() bool {
 	return false
 }
 
+// PricingMode says which published prices apply to a profile's backend.
+type PricingMode string
+
+const (
+	// PricingShared (the default, also spelled ""): a backend's own rows
+	// first, then the model's bare row, as package pricing resolves them.
+	PricingShared PricingMode = "shared"
+	// PricingIsolated: only rows keyed with the backend apply, so a model
+	// a gateway also offers first-party is never billed at that list
+	// price. An operator prices such a backend by declaring models[].rates
+	// or a "<backend>/<model>" row in pricing.json.
+	PricingIsolated PricingMode = "isolated"
+)
+
+// IsolatedPricing reports whether p's backend is priced only from rows
+// keyed with it (Pricing "isolated"). Read it on an expanded profile.
+func (p Profile) IsolatedPricing() bool { return p.Pricing == PricingIsolated }
+
 // ReasoningFormat says where a server puts a model's reasoning.
 type ReasoningFormat string
 
@@ -471,6 +497,9 @@ func (p Profile) Validate() error {
 	}
 	if !p.Metrics.known() {
 		bad("metrics %q is not one of vllm, sglang, llamacpp, none", p.Metrics)
+	}
+	if p.Pricing != "" && p.Pricing != PricingShared && p.Pricing != PricingIsolated {
+		bad("pricing %q is not \"shared\", \"isolated\" or unset", p.Pricing)
 	}
 	if p.ReasoningFormat != ReasoningField && p.ReasoningFormat != ThinkTags {
 		bad("reasoning_format %q is not \"think_tags\" or unset", p.ReasoningFormat)
