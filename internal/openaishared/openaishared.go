@@ -42,8 +42,9 @@ type Usage struct {
 	// Reasoning is usually counted inside Output (OpenAI); some servers
 	// (xAI) count it beside Output. MapUsage tells them apart by Total.
 	Reasoning *int64
-	// CacheRead and CacheWrite are subsets of Input.
-	CacheRead, CacheWrite *int64
+	// CacheRead and CacheWrite are subsets of Input; CacheWrite1h is the
+	// one-hour share of CacheWrite, where a server breaks it out.
+	CacheRead, CacheWrite, CacheWrite1h *int64
 }
 
 // Stamp says what the Detail beside the usage names.
@@ -94,6 +95,9 @@ func MapUsage(u *Usage, s Stamp, md map[string]any) (*genai.GenerateContentRespo
 			// genai's struct has no cache-write bucket; the Detail does.
 			if u.CacheWrite != nil {
 				d.CacheWriteTokens = Ptr(*u.CacheWrite)
+			}
+			if u.CacheWrite1h != nil {
+				d.CacheWrite1hTokens = Ptr(*u.CacheWrite1h)
 			}
 		}
 	}

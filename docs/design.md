@@ -260,6 +260,21 @@ tiers: {mid: Qwen/Qwen3-Coder-Next}
   wraps its client with `Resolved.HeaderTransport`. `kvmetrics` forwards them
   only to a same-origin `metrics_url`. Values read from the environment are
   reachable only through `HeaderTransport`, so they never print.
+- `platform: sap-orchestration` (#83) routes an `openai-chat` profile through
+  SAP AI Core's orchestration service ([§7.1](#71-openai-chat-l1-the-leverage)),
+  and the built-in `sap-ai-core` (#84) uses it. That built-in reads SAP's
+  credentials in either shape SAP issues: the service key JSON in
+  `AICORE_SERVICE_KEY` (bare, or nested under `credentials` as a Cloud Foundry
+  binding holds it), or `AICORE_AUTH_URL`, `AICORE_CLIENT_ID`,
+  `AICORE_CLIENT_SECRET` and `AICORE_BASE_URL`. A run that sets both is
+  refused, naming the variables; LiteLLM silently takes the first source with
+  any value, and a stale variable shadowing a fresh key is a costly mix-up.
+  The key is read by an unexported hook on the built-in that serves the four
+  `AICORE_*` values to `Resolve`, so the profile itself stays plain data and an
+  operator can extend it like any other. `AICORE_RESOURCE_GROUP` (default
+  `default`) is its `AI-Resource-Group` header and `AICORE_DEPLOYMENT_ID` its
+  `deployment_id` param. An X.509 service key is refused with a message saying
+  so; only client-secret keys are supported.
 
 `Open` (profile to `Provider`) lands with the first dialect in L1. Until
 then, `Resolve` is the construction-time check.
@@ -275,6 +290,7 @@ then, `Resolve` is the construction-time check.
 | `xai` | openai-chat (Responses opt-in) | api_key `XAI_API_KEY` | L2 |
 | `anthropic`, `anthropic-vertex` | anthropic | api_key / google_adc | L4 |
 | `gemini`, `vertex` | gemini | api_key / google_adc | L5 |
+| `sap-ai-core` | openai-chat, `platform: sap-orchestration` | oauth2_client_credentials, from `AICORE_SERVICE_KEY` or `AICORE_*` | P1 (#83, #84) |
 
 **Capabilities refuse at startup** (mast model-support §4.6). The library
 exposes `Capabilities()`. A product that needs one, such as mast's `bounded`
@@ -380,6 +396,58 @@ managed long tail, and any LiteLLM or OpenRouter endpoint.
 | Usage | `prompt_tokens`, `completion_tokens`, `prompt_tokens_details.cached_tokens`, `completion_tokens_details.reasoning_tokens`. Absent fields stay nil, and the profile's `usage:` overrides can force a field to "not reported". |
 | Retry | `openai-go`'s own retries are turned **off** (`MaxRetries: 0`). The adapter instead runs the shared `retry` package at the HTTP layer, where `retry-after-ms` and `retry-after` are still visible; a `model.LLM` decorator can't see them, as mast's `modelretry` doc notes. Retries are recorded under `callctx.RetryMetadataKey`, which is core-agent #1206 generalized. Products keep their own outer posture (mast's `modelretry`, core-agent's `RetryPolicy`). [Q7](#13-open-questions) is whether those collapse into the library's. |
 | Vertex MaaS | Base URL templated from project and region, an ADC token source as an `oauth2` transport, publisher-qualified ids (`deepseek-ai/…-maas`), and `Backend()` set to `vertex-maas` so prices can never fall through to first-party rows. |
+| SAP AI Core | `platform: sap-orchestration` (#83): the same request and response mapping inside SAP's orchestration envelope. See below. |
+
+**SAP AI Core orchestration (#83), as built.** One orchestration deployment
+serves every model SAP offers; the model is named in the body
+(`anthropic--claude-4.5-sonnet`, `gpt-5-mini`). The wire format follows SAP's
+Orchestration v2 OpenAPI spec and SAP's Cloud SDK for AI
+(`github.com/SAP/ai-sdk-js`), not LiteLLM's or kagent's implementations, and
+has **not yet been recorded against a real tenant** (#83 stays open for that
+corpus).
+
+- **Deployment.** `Open` lists `{base_url}/lm/deployments?scenarioId=orchestration&status=RUNNING`
+  (with the `AI-Resource-Group` header) and posts to the newest one's
+  `{deploymentUrl}/v2/completion`, so a resource group without one fails at
+  construction (R1). `deployment_id` pins one, which must be RUNNING. A 404
+  finds the deployment again and resends once. A deployment URL on another
+  host than the AI API's is refused, since the bearer token goes wherever it
+  points.
+- **Request.** The conversation goes to `messages_history`, which
+  orchestration passes through as it stands, and only the newest message to
+  `prompt_templating.prompt.template`, which it renders for `{{?name}}`
+  placeholders. A template must hold a message, and `tools` and
+  `response_format` live beside it. A newest message containing `{{?` is
+  refused rather than sent to be rewritten. Sampling settings and
+  `tool_choice` go to `model.params` (`tool_choice` is not in the template
+  schema; SAP's SDK passes it the same way, and the model's provider honors it
+  or not). Streaming sets `config.stream.enabled` and
+  `stream_options.include_usage`.
+- **Orchestration's modules** (filtering, masking, grounding, translation)
+  are product policy (rule #12): `extra_body.modules` is merged into
+  `config.modules` as written, and every other `extra_body` key goes to
+  `model.params`. The adapter builds `prompt_templating` itself and refuses an
+  `extra_body` that sets it.
+- **Response.** `final_result` is a Chat Completion, or one chunk per stream
+  event (`orchestration_result`, the v1 name, is read when it is all there
+  is). Reasoning arrives as a list of `{content, signature}` blocks, joined
+  into a thought part; reasoning echo sends the text back as one block, with
+  no signature, so `reasoning_echo` stays off on the built-in. Images go as
+  `image_url` parts, which the spec accepts on user messages.
+- **Usage.** `prompt_tokens`, `completion_tokens`, `cached_tokens`,
+  `cache_creation_tokens` (and its 1-hour share) and `reasoning_tokens`, each
+  only when sent (rule #11). The provider request id is orchestration's
+  `request_id`, the one SAP support asks for.
+- **Errors.** `{"error": {code, message, location}}`, or a list of them (one
+  per module configuration tried), over HTTP or as a stream event. `Code` is
+  the numeric code and `Type` the failing module.
+- **Pricing.** `Backend` is `sap-ai-core`, and core-models ships no
+  `sap-ai-core/…` rows: SAP bills in its capacity units. `LookupFor`'s bare
+  fallback still estimates a SAP model whose id matches a bare first-party
+  row (`gemini-2.5-pro`) at that list price; one priced only under its
+  vendor's backend (`gpt-5-mini`, an `openai/` row) and SAP's own spellings
+  (`anthropic--claude-…`) are unpriced. An operator who wants their contract
+  rate declares `models[].rates`.
 
 ### 7.2 `openai-responses` (L2)
 
@@ -733,7 +801,7 @@ Choices the design left open:
 | **L4** | Extract Anthropic (first-party and Vertex), merging in core-agent's caching and sidecar; both products switch | Both products' toolwire and cache-accounting tests green on the library adapter, including mast's #352 measured-turn fixture and core-agent's 1-hour-TTL accounting; core-agent prompt caching available to mast. *Done 2026-10-12: library side 2026-10-10 (§7.3 "As built"); mast #521 and core-agent #1296 switched, with judged-eval and live parity* |
 | **L5** | Extract Gemini and vertexcache, merging in core-agent's retry and cache handling; both products switch | mast's `IncludeServerSideToolInvocations` finding closed ([§12](#12-findings-from-the-inventory)); mast's #325 and core-agent's #902 eviction tests both green on the one verdict; core-agent's retry tests green on the library. *Done 2026-10-12 (mast #521, core-agent #1296)* |
 | **L6** | Pricing merge ([§9](#9-pricing-l6)) | One catalog; mast's backend-shape tests and core-agent's 1-hour-TTL tests both pass against it. *Library half done 2026-10-13 (both test sets pass in `pricing/`); mast adopted it (mast #544) and core-agent adopted it (core-agent #1328, on v0.13.3 since #1330)* |
-| **P1** | Bedrock Claude, Azure OpenAI, long-tail built-in profiles, NIM | Each has a tier map, catalog rows and a live smoke, or ships as an unvalidated template |
+| **P1** | Bedrock Claude, Azure OpenAI, long-tail built-in profiles, NIM | Each has a tier map, catalog rows and a live smoke, or ships as an unvalidated template. *SAP AI Core: requested by the maintainer on 2026-10-19 (#81–#84) as a gateway provider; built 2026-10-20 (`platform: sap-orchestration`, built-in `sap-ai-core`) on the `oauth2_client_credentials` auth kind (#81) and profile headers (#82), tested against a fake tenant; it ships unvalidated until a corpus from a real tenant is recorded (#83)* |
 
 **L5 status (2026-10-10).** The library half is done: package `dialect/gemini`
 (Developer API and Vertex AI), `dialect/gemini/vertexcache`, the `gemini` and

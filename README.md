@@ -17,7 +17,7 @@ Four wire formats ("dialects") are built:
 
 | Dialect | Package | Reaches |
 |---|---|---|
-| `openai-chat` | `dialect/openaichat` | Vertex AI partner models, xAI, vLLM, SGLang, Ollama and any OpenAI-compatible endpoint |
+| `openai-chat` | `dialect/openaichat` | Vertex AI partner models, xAI, vLLM, SGLang, Ollama and any OpenAI-compatible endpoint; SAP AI Core's orchestration service (`sap-ai-core`, not yet validated against a real tenant) |
 | `openai-responses` | `dialect/openairesp` | OpenAI, and any server that serves `/v1/responses` (xAI, vLLM) |
 | `anthropic` | `dialect/anthropic` | Claude on Anthropic's API and on Vertex AI |
 | `gemini` | `dialect/gemini` | Gemini on the Developer API and Vertex AI |

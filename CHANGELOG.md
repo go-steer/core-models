@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+### Added
+
+- **SAP AI Core** (#83, #84): `platform: sap-orchestration` on `openai-chat`,
+  and the built-in `sap-ai-core` profile. Orchestration speaks Chat
+  Completions inside SAP's envelope; the adapter wraps the request (the
+  conversation in `messages_history`, the newest message in
+  `prompt_templating`'s template, sampling settings and `tool_choice` in
+  `model.params`), reads `final_result` complete and streamed, and reads
+  SAP's `{code, message, location}` errors. `Open` finds the newest RUNNING
+  orchestration deployment in the resource group, or the one
+  `AICORE_DEPLOYMENT_ID` pins, so a missing deployment fails at startup; a 404
+  finds it again and resends once. The built-in reads SAP's service key
+  (`AICORE_SERVICE_KEY`, bare or nested under `credentials`) or the four
+  `AICORE_AUTH_URL`/`_CLIENT_ID`/`_CLIENT_SECRET`/`_BASE_URL` values, refusing
+  a run that sets both; `AICORE_RESOURCE_GROUP` (default `default`) becomes
+  its `AI-Resource-Group` header. Orchestration's modules (filtering,
+  masking, grounding, translation) are the product's, passed through
+  `extra_body.modules`. Usage maps every count SAP reports, cache writes and
+  their one-hour share included, and nothing it doesn't. Backend
+  `sap-ai-core`, with no prices. Built from SAP's Orchestration v2 spec and
+  Cloud SDK for AI and tested against a fake tenant; **not yet validated
+  against a real tenant** (#83 stays open for that corpus). New:
+  `openaichat.Options.Platform` and `DeploymentID`, `Client.Connect`,
+  `profile.PlatformSAPOrchestration`.
+- **`usage.Detail.CacheWrite1hTokens` from the OpenAI dialects** where a
+  server breaks out the one-hour share of a cache write (SAP AI Core's
+  orchestration does, for Claude).
+
 ## v0.14.0 (2026-10-20)
 
 ### Added

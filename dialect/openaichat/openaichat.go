@@ -84,7 +84,21 @@ type Options struct {
 	NoForcedToolChoice bool
 	// ExtraBody is merged into every request body: vendor fields the
 	// dialect does not model. It must not repeat a field the adapter sets.
+	// On PlatformSAPOrchestration its fields go to the model's params,
+	// except "modules", whose object is merged into orchestration's
+	// config.modules (filtering, masking, grounding, translation).
 	ExtraBody map[string]any
+
+	// Platform is where the API is hosted, when that changes the
+	// request: "" for a server that speaks Chat Completions itself,
+	// PlatformSAPOrchestration for SAP AI Core's orchestration service.
+	// There BaseURL is the AI API root (AI_API_URL plus /v2), the
+	// deployment is found from it (Connect), and the client must send
+	// the AI-Resource-Group header (profile headers do).
+	Platform string
+	// DeploymentID pins SAP AI Core's orchestration deployment. Empty
+	// uses the newest RUNNING one. PlatformSAPOrchestration only.
+	DeploymentID string
 }
 
 // ModelOptions are the per-model refinements of Options: one server
@@ -102,6 +116,9 @@ type Client struct {
 	opts     Options
 	endpoint string
 	http     *http.Client
+	// sap is set on PlatformSAPOrchestration, where the endpoint is a
+	// deployment found at startup rather than BaseURL's.
+	sap *sapDeployment
 }
 
 // New returns a Client for opts.
@@ -126,11 +143,39 @@ func New(opts Options) (*Client, error) {
 	}
 	hc := *base
 	hc.Transport = policy.Transport(rt)
-	return &Client{
+	c := &Client{
 		opts:     opts,
 		endpoint: strings.TrimRight(opts.BaseURL, "/") + "/chat/completions",
 		http:     &hc,
-	}, nil
+	}
+	switch opts.Platform {
+	case "":
+		if opts.DeploymentID != "" {
+			return nil, errors.New("openai-chat: DeploymentID applies to the sap-orchestration platform only")
+		}
+	case PlatformSAPOrchestration:
+		d, err := newSAPDeployment(opts.BaseURL, opts.DeploymentID)
+		if err != nil {
+			return nil, err
+		}
+		c.sap = d
+	default:
+		return nil, fmt.Errorf("openai-chat: unknown platform %q", opts.Platform)
+	}
+	return c, nil
+}
+
+// Connect does the startup work a platform needs before its first
+// request, so a misconfiguration fails at construction rather than
+// mid-session: on PlatformSAPOrchestration it finds the orchestration
+// deployment. It is a no-op otherwise. A Client that is never
+// connected does the same on its first request.
+func (c *Client) Connect(ctx context.Context) error {
+	if c.sap == nil {
+		return nil
+	}
+	_, err := c.sap.endpoint(ctx, c.http, "")
+	return err
 }
 
 // Model returns the model id on this server as an llm.LLM, with the
@@ -251,21 +296,51 @@ func (m *model) send(ctx context.Context, body *chatRequest) (*http.Response, er
 	if err != nil {
 		return nil, err
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, m.endpoint, bytes.NewReader(raw))
+	endpoint := m.endpoint
+	if m.sap != nil {
+		if endpoint, err = m.sap.endpoint(ctx, m.http, ""); err != nil {
+			return nil, err
+		}
+	}
+	resp, err := m.post(ctx, endpoint, raw, body.Stream)
+	if err != nil {
+		return nil, err
+	}
+	// A deployment that was stopped or replaced answers 404: find the
+	// current one and send once more.
+	if m.sap != nil && resp.StatusCode == http.StatusNotFound {
+		notFound := m.apiError(resp)
+		_ = resp.Body.Close()
+		fresh, err := m.sap.endpoint(ctx, m.http, endpoint)
+		if err != nil {
+			return nil, fmt.Errorf("%w (after %w)", err, notFound)
+		}
+		if fresh == endpoint {
+			return nil, notFound
+		}
+		if resp, err = m.post(ctx, fresh, raw, body.Stream); err != nil {
+			return nil, err
+		}
+	}
+	if resp.StatusCode/100 != 2 {
+		defer func() { _ = resp.Body.Close() }()
+		return nil, m.apiError(resp)
+	}
+	return resp, nil
+}
+
+func (m *model) post(ctx context.Context, endpoint string, raw []byte, stream bool) (*http.Response, error) {
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(raw))
 	if err != nil {
 		return nil, fmt.Errorf("openai-chat: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	if body.Stream {
+	if stream {
 		httpReq.Header.Set("Accept", "text/event-stream")
 	}
 	resp, err := m.http.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("openai-chat: %w", err)
-	}
-	if resp.StatusCode/100 != 2 {
-		defer func() { _ = resp.Body.Close() }()
-		return nil, apiError(resp)
 	}
 	return resp, nil
 }
@@ -274,6 +349,9 @@ func (m *model) send(ctx context.Context, body *chatRequest) (*http.Response, er
 // the request already carries is an error: ExtraBody adds vendor
 // switches, it never overrides what the adapter decided.
 func (m *model) encode(body *chatRequest) ([]byte, error) {
+	if m.sap != nil {
+		return sapEncode(body, m.opts.ExtraBody)
+	}
 	raw, err := json.Marshal(body)
 	if err != nil {
 		return nil, fmt.Errorf("openai-chat: encode request: %w", err)
@@ -294,6 +372,13 @@ func (m *model) encode(body *chatRequest) ([]byte, error) {
 	return json.Marshal(merged)
 }
 
+func (m *model) apiError(resp *http.Response) error {
+	if m.sap != nil {
+		return sapAPIError(resp)
+	}
+	return apiError(resp)
+}
+
 func apiError(resp *http.Response) error {
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 	f := openaishared.ParseError(raw)
@@ -302,7 +387,13 @@ func apiError(resp *http.Response) error {
 
 func (m *model) decodeComplete(r io.Reader) (*llm.Response, error) {
 	var cr chatResponse
-	if err := json.NewDecoder(r).Decode(&cr); err != nil {
+	if m.sap != nil {
+		got, err := sapComplete(r)
+		if err != nil {
+			return nil, err
+		}
+		cr = *got
+	} else if err := json.NewDecoder(r).Decode(&cr); err != nil {
 		return nil, fmt.Errorf("openai-chat: decode response: %w", err)
 	}
 	if len(cr.Choices) == 0 {
@@ -346,9 +437,9 @@ func (m *model) decodeStream(r io.Reader) iter.Seq2[*llm.Response, error] {
 			if data == "[DONE]" {
 				break
 			}
-			var c chunk
-			if err := json.Unmarshal([]byte(data), &c); err != nil {
-				yield(nil, fmt.Errorf("openai-chat: decode stream chunk: %w", err))
+			c, err := m.parseChunk([]byte(data))
+			if err != nil {
+				yield(nil, err)
 				return
 			}
 			if c.Error != nil {
@@ -418,6 +509,18 @@ func (m *model) decodeStream(r io.Reader) iter.Seq2[*llm.Response, error] {
 		final.TurnComplete = true
 		yield(final, nil)
 	}
+}
+
+// parseChunk reads one stream event's data.
+func (m *model) parseChunk(data []byte) (*chunk, error) {
+	if m.sap != nil {
+		return sapChunk(data)
+	}
+	var c chunk
+	if err := json.Unmarshal(data, &c); err != nil {
+		return nil, fmt.Errorf("openai-chat: decode stream chunk: %w", err)
+	}
+	return &c, nil
 }
 
 func partial(p *genai.Part, modelID string) *llm.Response {
@@ -578,9 +681,15 @@ func (m *model) mapUsage(u *wireUsage, id, served string, md map[string]any) (*g
 	if u.CompletionTokensDetails != nil {
 		n.Reasoning = u.CompletionTokensDetails.ReasoningTokens
 	}
-	if u.PromptTokensDetails != nil {
-		n.CacheRead = u.PromptTokensDetails.CachedTokens
-		n.CacheWrite = u.PromptTokensDetails.CreatedCacheTokens
+	if d := u.PromptTokensDetails; d != nil {
+		n.CacheRead = d.CachedTokens
+		n.CacheWrite = d.CreatedCacheTokens
+		if n.CacheWrite == nil {
+			n.CacheWrite = d.CacheCreationTokens
+		}
+		if d.CacheCreationTokenDetails != nil {
+			n.CacheWrite1h = d.CacheCreationTokenDetails.Ephemeral1h
+		}
 	}
 	return openaishared.MapUsage(n, stamp, md)
 }

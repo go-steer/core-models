@@ -17,7 +17,7 @@ Most models are reachable through one of three API shapes:
 
 | Wire format | Reaches | Status |
 |---|---|---|
-| OpenAI Chat Completions | Vertex AI partner models, xAI, vLLM, SGLang, Ollama, llama.cpp, NVIDIA NIM, Groq, Together, Fireworks, DeepSeek, Mistral, any LiteLLM or OpenRouter endpoint | **built** (`dialect/openaichat`) |
+| OpenAI Chat Completions | Vertex AI partner models, xAI, vLLM, SGLang, Ollama, llama.cpp, NVIDIA NIM, Groq, Together, Fireworks, DeepSeek, Mistral, any LiteLLM or OpenRouter endpoint; SAP AI Core's orchestration service through its envelope | **built** (`dialect/openaichat`); SAP AI Core not yet validated against a real tenant |
 | OpenAI Responses | OpenAI, xAI (opt-in), and vLLM's `/v1/responses` | **built** (`dialect/openairesp`); not yet live-tested against OpenAI or xAI |
 | Anthropic Messages | Claude on Anthropic and Vertex AI; Bedrock later | **built** (`dialect/anthropic`); mast and core-agent run on it |
 | genai | Gemini on the Developer API and Vertex AI | **built** (`dialect/gemini`); mast and core-agent run on it |
@@ -141,6 +141,36 @@ request is sent once more with a new token. A refused client secret is
 reported, not retried. The client secret and the tokens never appear in an
 error or a log line. The gateway's own metrics endpoint gets the token
 only over https.
+
+## SAP AI Core
+
+SAP's Generative AI Hub is the gateway some organizations require model
+traffic to go through. Its orchestration service serves every model SAP
+offers from one deployment, and speaks Chat Completions inside SAP's own
+envelope. The built-in `sap-ai-core` profile reaches it with the
+credentials SAP users already have:
+
+```bash
+export AICORE_SERVICE_KEY="$(cat sap-service-key.json)"   # or AICORE_AUTH_URL, _CLIENT_ID, _CLIENT_SECRET, _BASE_URL
+export AICORE_RESOURCE_GROUP=team-a                       # optional; "default" when unset
+```
+
+Opening the profile fetches a token and finds the newest running
+orchestration deployment in the resource group, so a missing deployment
+fails at startup. Models are SAP's names for them, such as
+`anthropic--claude-4.5-sonnet` or `gpt-5-mini`. Orchestration's own modules
+(filtering, masking, grounding, translation) are configured by you, through
+`extra_body.modules`; the [profiles reference](/reference/profiles/#sap-ai-core)
+has the details and the limits.
+
+:::caution[Not yet validated against a real tenant]
+The envelope follows SAP's Orchestration v2 API specification and SAP's
+Cloud SDK for AI, and passes the shared conformance scenarios against a
+fake tenant. Streaming and tool calling through orchestration have not yet
+been checked against SAP itself. Until a corpus is recorded from a real
+tenant ([#83](https://github.com/go-steer/core-models/issues/83)), treat it
+as an unvalidated profile.
+:::
 
 ## What "supported" will mean
 
