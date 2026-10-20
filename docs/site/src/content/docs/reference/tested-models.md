@@ -184,6 +184,12 @@ the breakdown. It is also served only from `us-east5`.
 
 All nine replay on every pull request.
 
+### Not yet tested against a real server
+
+| Server | Profile | What exists |
+|---|---|---|
+| SAP AI Core orchestration | `sap-ai-core` | The shared scenarios pass against a fake tenant built from SAP's Orchestration v2 spec and SDK fixtures. No corpus from a real tenant yet ([#83](https://github.com/go-steer/core-models/issues/83)) |
+
 ## Reproducing
 
 - **Conformance:** `go test -tags live -run TestLive -v .` in core-models,

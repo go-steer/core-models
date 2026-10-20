@@ -71,6 +71,11 @@ type Platform string
 // PlatformVertex is Google Cloud's Vertex AI.
 const PlatformVertex Platform = "vertex"
 
+// PlatformSAPOrchestration is SAP AI Core's orchestration service: Chat
+// Completions wrapped in SAP's envelope, sent to a deployment found at
+// startup (package openaichat, docs/design.md §7.1). openai-chat only.
+const PlatformSAPOrchestration Platform = "sap-orchestration"
+
 // Tier is the three-rung vocabulary products route on.
 type Tier string
 
@@ -107,7 +112,8 @@ type Profile struct {
 	Dialect Dialect `json:"dialect,omitempty" yaml:"dialect,omitempty"`
 	// Platform is where a vendor's API is hosted, when that changes the
 	// request: empty for the vendor's own service, PlatformVertex for
-	// Vertex AI, which takes the model in the URL path. Said explicitly
+	// Vertex AI, which takes the model in the URL path,
+	// PlatformSAPOrchestration for SAP AI Core. Said explicitly
 	// rather than inferred from the credential or the backend name,
 	// because a proxy in front of Vertex may take a bearer token, and a
 	// backend can be renamed for pricing alone.
@@ -164,6 +170,13 @@ type Profile struct {
 	// derive computes extra BaseURL params from the resolved ones. Only
 	// built-ins set it; see vertexMaaS.
 	derive func(params map[string]string)
+	// env wraps the environment Resolve reads, for a built-in whose
+	// users already hold their settings in another shape (sap-ai-core's
+	// service key). It sees one view of the environment, Options.Auth's
+	// Getenv laid over Options' own, and its result serves both, so the
+	// URLs and the credential always come from the same source. Only
+	// built-ins set it.
+	env func(p Profile, getenv func(string) string) (func(string) string, error)
 }
 
 // Model is one model a profile serves.
@@ -399,12 +412,18 @@ func (p Profile) Validate() error {
 	if !p.Dialect.known() {
 		bad("dialect %q is not one of openai-chat, openai-responses, anthropic, gemini", p.Dialect)
 	}
-	switch {
-	case p.Platform == "":
-	case p.Platform != PlatformVertex:
-		bad("platform %q is not \"vertex\" or unset", p.Platform)
-	case p.Dialect != Anthropic && p.Dialect != Gemini:
-		bad("platform %q applies to the anthropic and gemini dialects, not %s", p.Platform, p.Dialect)
+	switch p.Platform {
+	case "":
+	case PlatformVertex:
+		if p.Dialect != Anthropic && p.Dialect != Gemini {
+			bad("platform %q applies to the anthropic and gemini dialects, not %s", p.Platform, p.Dialect)
+		}
+	case PlatformSAPOrchestration:
+		if p.Dialect != OpenAIChat {
+			bad("platform %q applies to the openai-chat dialect, not %s", p.Platform, p.Dialect)
+		}
+	default:
+		bad("platform %q is not \"vertex\", \"sap-orchestration\" or unset", p.Platform)
 	}
 	switch {
 	case p.BaseURL == "" && (p.Dialect == OpenAIChat || p.Dialect == OpenAIResponses):
@@ -412,8 +431,13 @@ func (p Profile) Validate() error {
 	case p.BaseURL != "":
 		// Placeholders and ${VAR}s are filled at Resolve; stand a "0" in
 		// for each so the shape check holds wherever they sit, the port
-		// included.
+		// included. A base_url that is nothing but a ${VAR} is a whole
+		// URL from the environment (sap-ai-core's AICORE_BASE_URL),
+		// checked at Resolve once it is read.
 		shape := placeholderRE.ReplaceAllString(stripEnv(p.BaseURL), "0")
+		if wholeEnvRef(p.BaseURL) {
+			shape = "https://0"
+		}
 		if err := checkURL(shape); err != nil {
 			bad("base_url: %v", err)
 		}
@@ -498,6 +522,17 @@ func (p Profile) Validate() error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// wholeEnvRef reports whether s is one ${VAR} or ${VAR:-default}
+// reference and nothing else: a whole URL from the environment, whose
+// shape can only be checked once it is read.
+func wholeEnvRef(s string) bool {
+	if !strings.HasPrefix(s, "${") {
+		return false
+	}
+	_, _, _, n, ok := parseEnvRef(s)
+	return ok && n == len(s)
 }
 
 func (p Profile) derives(param string) bool {

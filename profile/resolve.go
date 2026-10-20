@@ -235,6 +235,7 @@ var builtins = map[string]Profile{
 		},
 		derive: vertexHost,
 	},
+	"sap-ai-core": sapAICore,
 }
 
 // vertexHost sets {host} from {region}: the global location is served
@@ -460,6 +461,27 @@ func Resolve(ctx context.Context, p Profile, opts Options) (*Resolved, error) {
 	fail := func(format string, args ...any) error {
 		return fmt.Errorf("profile %q: "+format, append([]any{p.Name}, args...)...)
 	}
+	authGetenv := opts.Auth.Getenv
+	if p.env != nil {
+		src := getenv
+		if authGetenv != nil {
+			base, overlay := getenv, authGetenv
+			src = func(name string) string {
+				if v := overlay(name); v != "" {
+					return v
+				}
+				return base(name)
+			}
+		}
+		wrapped, err := p.env(p, src)
+		if err != nil {
+			return nil, fail("%w", err)
+		}
+		getenv, authGetenv = wrapped, wrapped
+	}
+	if authGetenv == nil {
+		authGetenv = getenv
+	}
 
 	params := map[string]string{}
 	for k, v := range p.Params {
@@ -495,9 +517,7 @@ func Resolve(ctx context.Context, p Profile, opts Options) (*Resolved, error) {
 	}
 
 	authOpts := opts.Auth
-	if authOpts.Getenv == nil {
-		authOpts.Getenv = getenv
-	}
+	authOpts.Getenv = authGetenv
 	authCfg := p.Auth
 	if authCfg.TokenURL != "" {
 		if authCfg.TokenURL, err = expandEnv(authCfg.TokenURL, getenv); err != nil {

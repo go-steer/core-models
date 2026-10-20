@@ -103,8 +103,15 @@ func Open(ctx context.Context, p profile.Profile, opts Options) (Provider, error
 			ReasoningEcho:          profile.Has(rp.Capabilities.ReasoningEcho),
 			CachedTokensUnreliable: rp.Usage.CachedTokens == profile.Unreliable,
 			ThinkTags:              rp.ReasoningFormat == profile.ThinkTags,
+			Platform:               string(rp.Platform),
+			DeploymentID:           sapDeploymentID(r),
 		})
 		if err != nil {
+			return nil, fmt.Errorf("profile %q: %w", rp.Name, err)
+		}
+		// SAP AI Core's deployment is found now, so a resource group with
+		// none fails here rather than on the first request (R1).
+		if err := c.Connect(ctx); err != nil {
 			return nil, fmt.Errorf("profile %q: %w", rp.Name, err)
 		}
 		return &provider{p: rp, model: func(id string) llm.LLM {
@@ -149,6 +156,16 @@ func Open(ctx context.Context, p profile.Profile, opts Options) (Provider, error
 		}}, nil
 	}
 	return nil, fmt.Errorf("profile %q: unknown dialect %q", rp.Name, rp.Dialect)
+}
+
+// sapDeploymentID is the deployment_id param on the sap-orchestration
+// platform, where it pins SAP AI Core's deployment; "" elsewhere, where
+// a param of that name only fills a base_url placeholder.
+func sapDeploymentID(r *profile.Resolved) string {
+	if r.Profile.Platform != profile.PlatformSAPOrchestration {
+		return ""
+	}
+	return r.Params["deployment_id"]
 }
 
 // withProfileHeaders returns hc with the profile's headers set on every

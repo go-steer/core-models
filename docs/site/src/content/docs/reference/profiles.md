@@ -33,7 +33,7 @@ A self-hosted vLLM server, starting from the built-in `vllm` template:
 | `name` | What `--provider` and product config refer to. Lowercase letters, digits and `-` |
 | `extends` | A built-in profile to start from. Every field set here overrides the built-in's |
 | `dialect` | `openai-chat`, `openai-responses`, `anthropic` or `gemini` |
-| `platform` | Where the vendor's API is hosted, when that changes the request. `vertex` routes an `anthropic` profile the way Vertex AI serves Claude: the model in the URL path, `anthropic_version` in the body. Set on `anthropic-vertex` and inherited by profiles extending it; unset means the vendor's own API. Said explicitly because neither the credential nor the backend name settles it: a proxy in front of Vertex may take a bearer token |
+| `platform` | Where the vendor's API is hosted, when that changes the request. `vertex` routes an `anthropic` profile the way Vertex AI serves Claude: the model in the URL path, `anthropic_version` in the body. Set on `anthropic-vertex` and inherited by profiles extending it. `sap-orchestration` routes an `openai-chat` profile through SAP AI Core's orchestration service (see [SAP AI Core](#sap-ai-core)); set on `sap-ai-core`. Unset means the vendor's own API. Said explicitly because neither the credential nor the backend name settles it: a proxy in front of Vertex may take a bearer token |
 | `base_url` | The API root. May contain `{param}` placeholders and `${VAR}` references. Required for the OpenAI dialects. For `anthropic` with `platform: vertex`, the Vertex AI publisher prefix (`…/publishers/anthropic/models`) |
 | `params` | Values for `base_url`'s placeholders. Each may be `${VAR}` or `${VAR:-default}`, and a default may itself be a reference: `${A:-${B:-x}}` is the first of `A` and `B` that is set, else `x` |
 | `auth.kind` | `api_key` or `bearer` (with `auth.env` naming the variable that holds it), `google_adc`, `oauth2_client_credentials`, or `none` |
@@ -114,6 +114,7 @@ An Azure API Management front end, for example:
 | `vllm` | openai-chat | *template: set `base_url`* | none | Parallel tool calls declared |
 | `sglang` | openai-chat | *template: set `base_url`* | none | Parallel tool calls declared |
 | `openai-compatible` | openai-chat | *template: set `base_url`* | none | For any other OpenAI-compatible endpoint; set `auth` too |
+| `sap-ai-core` | openai-chat | SAP AI Core's orchestration deployment, found at startup | OAuth2 client credentials from `AICORE_SERVICE_KEY`, or `AICORE_AUTH_URL`, `AICORE_CLIENT_ID`, `AICORE_CLIENT_SECRET` and `AICORE_BASE_URL` | `platform: sap-orchestration`. Backend `sap-ai-core`, with no prices. Any id SAP's orchestration serves, such as `anthropic--claude-4.5-sonnet` or `gpt-5-mini`. **Not yet validated against a real tenant.** See [SAP AI Core](#sap-ai-core) |
 
 **Opting a server into the Responses API.** Any OpenAI-shaped profile can set
 `"dialect": "openai-responses"` to use `POST {base_url}/responses` instead of
@@ -142,6 +143,60 @@ region:
 ```json
 {"name": "vertex-maas-us-east5", "extends": "vertex-maas", "params": {"region": "us-east5"}}
 ```
+
+### SAP AI Core
+
+`sap-ai-core` reaches SAP's Generative AI Hub through its orchestration
+service, the shape LiteLLM's `sap` provider and SAP's SDKs use. It reads
+the credentials SAP issues in either form:
+
+- **A service key**: the JSON from SAP BTP, in `AICORE_SERVICE_KEY`, as SAP
+  issues it or nested under `"credentials"` as a Cloud Foundry binding holds
+  it. It supplies the token endpoint, the client and the AI API URL.
+- **Four values**: `AICORE_AUTH_URL`, `AICORE_CLIENT_ID`,
+  `AICORE_CLIENT_SECRET` and `AICORE_BASE_URL` (the service key's `url` and
+  `serviceurls.AI_API_URL`; SAP's `/oauth/token` and `/v2` paths are added
+  when they're missing).
+
+Setting both is refused, naming the variables, rather than one silently
+winning. `AICORE_RESOURCE_GROUP` picks the resource group (default
+`default`), and `AICORE_DEPLOYMENT_ID` pins a deployment instead of the
+newest running orchestration one. Only client-secret service keys work; an
+X.509 key is refused with a message saying so.
+
+```bash
+export AICORE_SERVICE_KEY="$(cat sap-service-key.json)"
+export AICORE_RESOURCE_GROUP=team-a
+```
+
+Orchestration's own modules (content filtering, data masking, grounding,
+translation) are yours to configure. Put them under `extra_body.modules`,
+which is merged into the request's `config.modules`; every other
+`extra_body` key goes to the model's parameters:
+
+```json
+{"name": "sap-masked", "extends": "sap-ai-core",
+ "extra_body": {"reasoning_effort": "low",
+                "modules": {"masking": {"providers": [{"type": "sap_data_privacy_integration",
+                  "method": "anonymization", "entities": [{"type": "profile-email"}]}]}}}}
+```
+
+Two limits to know about:
+
+- The newest message in a request is rendered by orchestration's template
+  for `{{?name}}` placeholders. A literal `{{?` in it is sent as a
+  placeholder whose value is `{{?`, so it should come back as written;
+  earlier messages pass through untouched.
+- SAP bills in capacity units, and core-models ships no `sap-ai-core`
+  prices. A model whose id matches a first-party row without a backend
+  prefix (`gemini-2.5-pro`) is estimated at that list price by the
+  catalog's fallback; others (`gpt-5-mini`, priced only as `openai/…`, and
+  SAP's own spellings such as `anthropic--claude-…`) are unpriced. Declare
+  `models[].rates` for your contract rate.
+
+The request and response shapes follow SAP's Orchestration v2 API
+specification and SAP's Cloud SDK for AI, and are tested against a fake
+tenant. They have not yet been checked against a real SAP AI Core tenant.
 
 ## Opening a profile
 

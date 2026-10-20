@@ -152,6 +152,13 @@ type wireUsage struct {
 		// CreatedCacheTokens is vLLM's count of prompt tokens written to
 		// its prefix cache (with --enable-prompt-tokens-details).
 		CreatedCacheTokens *int64 `json:"created_cache_tokens"`
+		// CacheCreationTokens and its per-TTL breakdown are SAP AI Core
+		// orchestration's count of prompt tokens written to a cache
+		// (Anthropic models only).
+		CacheCreationTokens       *int64 `json:"cache_creation_tokens"`
+		CacheCreationTokenDetails *struct {
+			Ephemeral1h *int64 `json:"ephemeral_1h_input_tokens"`
+		} `json:"cache_creation_token_details"`
 	} `json:"prompt_tokens_details"`
 	CompletionTokensDetails *struct {
 		ReasoningTokens *int64 `json:"reasoning_tokens"`
