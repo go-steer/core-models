@@ -172,11 +172,12 @@ var nameExclusions = []struct{ Pattern, Why string }{
 }
 
 // retiredUpstream drops exact model ids the provider has retired but
-// LiteLLM still lists without a deprecation_date. Each is a prefixed copy
-// left behind when upstream removed the bare key, so only
-// discoverPrefixOnly can reach it; the bare pass never saw them. Name
-// the evidence, so a future reader can tell whether the entry still
-// earns its place.
+// LiteLLM still lists without a deprecation_date, or with one whose
+// deprecationGrace hasn't run out. It applies to every pass: bare ids,
+// prefixed copies only discoverPrefixOnly reaches, and the profile
+// backends' model ids (qualifyProfileBackends). Add an id only once a live probe shows it gone, and
+// name the evidence, so a future reader can tell whether the entry
+// still earns its place.
 var retiredUpstream = map[string]string{
 	"gemini-3-pro-preview": "shut down on both backends: the Gemini API answers 404 \"no longer " +
 		"available … use gemini-3.1-pro-preview\" and Vertex global 404s (probed 2026-10-13); " +
@@ -184,6 +185,20 @@ var retiredUpstream = map[string]string{
 	"claude-3-sonnet": "Claude 3 Sonnet was retired on Anthropic's API and on Vertex; " +
 		"LiteLLM kept the vertex_ai/ rows with no deprecation_date",
 	"claude-3-sonnet-20240229": "the dated spelling of claude-3-sonnet (vertex_ai/claude-3-sonnet@20240229)",
+
+	// Shut down inside their deprecationGrace. Earlier regens dropped
+	// these on their deprecation_date, so the grace would have brought
+	// them back; each answered 404 when probed on 2026-10-20.
+	"claude-3-haiku":                        "Vertex AI 404s claude-3-haiku@20240307 in us-east5 and global (deprecated 2026-08-23)",
+	"claude-3-haiku-20240307":               "the dated spelling of claude-3-haiku (vertex_ai/claude-3-haiku@20240307)",
+	"gpt-3.5-turbo-1106":                    "OpenAI 404s it: \"does not exist\" (deprecated 2026-09-28)",
+	"gpt-5-codex":                           "OpenAI 404s it: \"does not exist\" (deprecated 2026-07-23)",
+	"gpt-5.1-codex":                         "OpenAI 404s it: \"does not exist\" (deprecated 2026-07-23)",
+	"gpt-5.1-codex-max":                     "OpenAI 404s it: \"does not exist\" (deprecated 2026-07-23)",
+	"gpt-5.1-codex-mini":                    "OpenAI 404s it: \"does not exist\" (deprecated 2026-07-23)",
+	"gpt-5.2-codex":                         "OpenAI 404s it: \"does not exist\" (deprecated 2026-07-23)",
+	"gpt-4o-search-preview-2025-03-11":      "OpenAI 404s it on Chat Completions: \"has been deprecated\" (2026-07-23)",
+	"gpt-4o-mini-search-preview-2025-03-11": "OpenAI 404s it on Chat Completions: \"has been deprecated\" (2026-07-23)",
 }
 
 // liteLLMEntry mirrors the subset of LiteLLM's schema the generator
@@ -211,8 +226,8 @@ type liteLLMEntry struct {
 	// every model whose entry predates the flag.
 	SupportsFunctionCalling *bool `json:"supports_function_calling,omitempty"`
 
-	// DeprecationDate is an ISO date. Set on 15 entries today, every
-	// one of them already in the past.
+	// DeprecationDate is an ISO date. What it marks (an announcement or
+	// a shutdown) varies by model; see deprecationGrace.
 	DeprecationDate string `json:"deprecation_date,omitempty"`
 
 	// SupportedOutputModalities catches the text-to-speech models that
@@ -301,6 +316,14 @@ func main() {
 			"regen-builtin-pricing: %d Gemini/Anthropic entries rejected:\n", len(rejected))
 		for _, r := range rejected {
 			fmt.Fprintf(os.Stderr, "  %-44s %s\n", r.Name, r.Why)
+		}
+	}
+
+	if grace := inGrace(all, append(append([]generatedEntry{}, kept...), qualified...), now); len(grace) > 0 {
+		fmt.Fprintf(os.Stderr,
+			"regen-builtin-pricing: %d models kept through their deprecation grace:\n", len(grace))
+		for _, g := range grace {
+			fmt.Fprintf(os.Stderr, "  %-44s %s\n", g.Name, g.Why)
 		}
 	}
 
@@ -684,12 +707,8 @@ func eligible(name string, e liteLLMEntry, today time.Time) (ok bool, family boo
 	if e.MaxInputTokens == nil || *e.MaxInputTokens <= 0 {
 		return false, true, "no max_input_tokens; compaction would have no window to threshold against"
 	}
-	if e.DeprecationDate != "" {
-		// Unparseable dates are treated as "not deprecated" rather than
-		// dropping a live model over an upstream formatting change.
-		if d, err := time.Parse("2006-01-02", e.DeprecationDate); err == nil && !d.After(today) {
-			return false, true, "deprecated upstream on " + e.DeprecationDate
-		}
+	if why, gone := pastGrace(e, today); gone {
+		return false, true, why
 	}
 	if e.SupportedOutputModalities != nil && !slices.Contains(e.SupportedOutputModalities, "text") {
 		return false, true, fmt.Sprintf("emits %v, not text", e.SupportedOutputModalities)
@@ -738,12 +757,87 @@ func eligibleProfile(e liteLLMEntry, today time.Time) (bool, string) {
 	case e.SupportedOutputModalities != nil && !slices.Contains(e.SupportedOutputModalities, "text"):
 		return false, fmt.Sprintf("emits %v, not text", e.SupportedOutputModalities)
 	}
-	if e.DeprecationDate != "" {
-		if d, err := time.Parse("2006-01-02", e.DeprecationDate); err == nil && !d.After(today) {
-			return false, "deprecated upstream on " + e.DeprecationDate
-		}
+	if why, gone := pastGrace(e, today); gone {
+		return false, why
 	}
 	return true, ""
+}
+
+// deprecationGrace is how long a model keeps its rows after LiteLLM's
+// deprecation_date has passed.
+//
+// The date doesn't say what it marks: on 2026-10-20 LiteLLM dated
+// gemini-2.5-flash, -flash-lite and -pro that day, and all three still
+// answered on the Gemini API and on Vertex AI (global and us-central1).
+// Google's shutdowns routinely trail the dates it announces. The two
+// mistakes don't cost the same, either. A row for a model that has shut
+// down prices calls that fail anyway; a missing row for a model that
+// still answers makes it unpriced, and a product that refuses unpriced
+// models under a cost ceiling (core-agent since #1327) then refuses to
+// start. So a deprecated model stays for 90 days past its date. To drop
+// one sooner, probe it and, once it 404s, name it in retiredUpstream.
+const deprecationGrace = 90 * 24 * time.Hour
+
+// deprecated parses e's deprecation_date. Unparseable dates are treated
+// as "not deprecated" rather than dropping a live model over an
+// upstream formatting change.
+func deprecated(e liteLLMEntry) (time.Time, bool) {
+	if e.DeprecationDate == "" {
+		return time.Time{}, false
+	}
+	d, err := time.Parse("2006-01-02", e.DeprecationDate)
+	return d, err == nil
+}
+
+// pastGrace reports whether e's deprecation grace has run out by today,
+// and if so, why it drops.
+func pastGrace(e liteLLMEntry, today time.Time) (string, bool) {
+	d, ok := deprecated(e)
+	if !ok || today.Before(d.Add(deprecationGrace)) {
+		return "", false
+	}
+	return fmt.Sprintf("deprecated upstream on %s; grace ended %s",
+		e.DeprecationDate, d.Add(deprecationGrace).Format("2006-01-02")), true
+}
+
+// inGrace lists the models whose rows are kept only by deprecationGrace:
+// LiteLLM's date has passed, the grace has not. emitted is every rendered
+// row name, bare and qualified. The list is for the regen report, so a
+// reviewer sees which kept rows are on borrowed time.
+func inGrace(all map[string]liteLLMEntry, emitted []generatedEntry, today time.Time) []rejection {
+	names := map[string]bool{}
+	for _, e := range emitted {
+		names[e.Name] = true
+		if _, model, ok := strings.Cut(e.Name, "/"); ok {
+			names[model] = true
+		}
+	}
+	seen := map[string]bool{}
+	var out []rejection
+	for key, e := range all {
+		d, ok := deprecated(e)
+		if !ok || d.After(today) {
+			continue
+		}
+		if _, gone := pastGrace(e, today); gone {
+			continue
+		}
+		id := key
+		if i := strings.LastIndex(id, "/"); i >= 0 {
+			id = id[i+1:]
+		}
+		if bare, ok := litellm.BareID(id); ok {
+			id = bare
+		}
+		if !names[id] || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, rejection{Name: id, Why: fmt.Sprintf("deprecated upstream on %s, kept until %s",
+			e.DeprecationDate, d.Add(deprecationGrace).Format("2006-01-02"))})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
 }
 
 // qualifyProfileBackends emits a "<backend>/<model>" row for every
@@ -757,6 +851,9 @@ func qualifyProfileBackends(all map[string]liteLLMEntry, today time.Time) []gene
 				continue
 			}
 			if excludedName(model) {
+				continue
+			}
+			if _, retired := retiredUpstream[model]; retired {
 				continue
 			}
 			if ok, _ := eligibleProfile(e, today); !ok {
@@ -1101,7 +1198,8 @@ func fileHeader(updatedAt time.Time, source string) string {
 //
 // Membership is a rule, not a list: every Gemini and Anthropic model
 // in LiteLLM's catalog that is mode="chat", supports function calling,
-// carries a published price and window, and is not deprecated, whether
+// carries a published price and window, and is not past its
+// deprecation grace (90 days after LiteLLM's deprecation_date), whether
 // LiteLLM lists it under a bare key or only under a backend prefix, plus
 // the rows of the profile backends (vertex-maas, openai, xai) under a
 // similar rule. See eligible() and eligibleProfile() in
