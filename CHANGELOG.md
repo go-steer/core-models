@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.15.0 (2026-10-20)
+
 ### Added
 
 - **SAP AI Core** (#83, #84): `platform: sap-orchestration` on `openai-chat`,
@@ -22,7 +24,7 @@
   masking, grounding, translation) are the product's, passed through
   `extra_body.modules`. Usage maps every count SAP reports, cache writes and
   their one-hour share included, and nothing it doesn't. Backend
-  `sap-ai-core`, with no prices. Built from SAP's Orchestration v2 spec and
+  `sap-ai-core`, with no prices and isolated pricing (below). Built from SAP's Orchestration v2 spec and
   Cloud SDK for AI and tested against a fake tenant; **not yet validated
   against a real tenant** (#83 stays open for that corpus). New:
   `openaichat.Options.Platform` and `DeploymentID`, `Client.Connect`,
@@ -30,6 +32,27 @@
 - **`usage.Detail.CacheWrite1hTokens` from the OpenAI dialects** where a
   server breaks out the one-hour share of a cache write (SAP AI Core's
   orchestration does, for Claude).
+- **Profile `pricing: isolated`**, for a backend that bills in its own
+  units. `pricing.Catalog.LookupFor` prices an isolated backend only from
+  rows keyed `<backend>/<model>` (declared `models[].rates`, or such a row
+  in any `pricing.json` layer), never from a model's bare row, so a
+  gateway's traffic is never billed at the first-party list price of a
+  model it also offers. The built-in `sap-ai-core` sets it, and the catalog
+  honors built-in profiles without being told. This is the first release
+  with SAP AI Core, so no consumer saw SAP priced otherwise; a SAP model is
+  unpriced until its rate is declared, which a product enforcing a cost
+  ceiling will ask for.
+- **`pricing.Options.Profiles`**: the product's provider profiles, expanded
+  by `NewCatalog`, which takes both their declared rates (as
+  `DeclaredFromProfiles` does, beneath `Options.Declared`) and their
+  pricing mode. That is how an operator's own isolated profile, a SAP
+  profile under its own backend, or `pricing: shared` on a profile keeping
+  `sap-ai-core`'s backend reaches pricing. Two profiles on one backend that
+  disagree on pricing are an error. Products already passing
+  `DeclaredFromProfiles(ps)` can pass `Profiles: ps` instead.
+  New: `profile.Profile.Pricing`, `profile.PricingShared`,
+  `profile.PricingIsolated`, `Profile.IsolatedPricing`,
+  `pricing.Options.Profiles`.
 
 ## v0.14.0 (2026-10-20)
 

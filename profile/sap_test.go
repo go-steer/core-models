@@ -219,3 +219,31 @@ func TestSAPPlatformDialect(t *testing.T) {
 		t.Fatalf("Validate = %v", err)
 	}
 }
+
+// sap-ai-core's pricing is isolated, so package pricing never bills SAP
+// traffic at a first-party list price; a profile extending it inherits
+// that and can set it back to shared, and anything else is refused.
+func TestSAPPricingIsolated(t *testing.T) {
+	sap, ok := profile.Builtin("sap-ai-core")
+	if !ok || !sap.IsolatedPricing() {
+		t.Fatalf("sap-ai-core pricing = %q, want isolated", sap.Pricing)
+	}
+	derived, err := profile.Expand(profile.Profile{Name: "my-sap", Extends: "sap-ai-core"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !derived.IsolatedPricing() || derived.BackendName() != "sap-ai-core" {
+		t.Errorf("derived = pricing %q backend %q, want isolated sap-ai-core", derived.Pricing, derived.BackendName())
+	}
+	shared, err := profile.Expand(profile.Profile{Name: "my-sap", Extends: "sap-ai-core", Pricing: profile.PricingShared})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if shared.IsolatedPricing() {
+		t.Error("pricing shared on a derived profile did not override the built-in's isolated")
+	}
+	bad := profile.Profile{Name: "x", Dialect: profile.OpenAIChat, BaseURL: "https://x.example/v1", OpenModels: &[]bool{true}[0], Pricing: "own"}
+	if err := bad.Validate(); err == nil || !strings.Contains(err.Error(), `pricing "own"`) {
+		t.Errorf("Validate(pricing own) = %v, want it refused", err)
+	}
+}
