@@ -20,6 +20,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -705,5 +706,29 @@ func TestDefaultBoundsAUnaryCallLongerThanAStream(t *testing.T) {
 	p := retry.Default()
 	if p.UnaryHeaderTimeout <= p.HeaderTimeout {
 		t.Errorf("UnaryHeaderTimeout %s <= HeaderTimeout %s; a whole non-streaming answer must be allowed longer", p.UnaryHeaderTimeout, p.HeaderTimeout)
+	}
+}
+
+type permanent struct{}
+
+func (permanent) Error() string   { return "refused for good" }
+func (permanent) Permanent() bool { return true }
+
+type rtFunc func(*http.Request) (*http.Response, error)
+
+func (f rtFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// An error that says it is permanent (package auth's refused client
+// secret) is returned after one attempt.
+func TestAPermanentErrorIsNotRetried(t *testing.T) {
+	var waits []time.Duration
+	attempts := 0
+	base := rtFunc(func(*http.Request) (*http.Response, error) {
+		attempts++
+		return nil, fmt.Errorf("auth: %w", permanent{})
+	})
+	_, err := post(t, context.Background(), policy(&waits).Transport(base), "http://unused.invalid", "{}")
+	if err == nil || attempts != 1 {
+		t.Fatalf("err = %v after %d attempts, want the error after one", err, attempts)
 	}
 }

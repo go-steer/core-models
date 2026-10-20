@@ -419,8 +419,9 @@ func (p Profile) Validate() error {
 	// A token_url that starts with ${VAR} is a whole URL from the
 	// environment (SAP's AICORE_AUTH_URL), checked once it is read.
 	if p.Auth.TokenURL != "" && !strings.HasPrefix(p.Auth.TokenURL, "${") {
-		if err := checkURL(stripEnv(p.Auth.TokenURL)); err != nil {
-			bad("auth.token_url: %v", err)
+		// Not quoted back: a token URL's query string may carry a secret.
+		if checkURL(stripEnv(p.Auth.TokenURL)) != nil {
+			bad("auth.token_url is not an http or https URL with a host")
 		}
 	}
 	if p.MetricsURL != "" {

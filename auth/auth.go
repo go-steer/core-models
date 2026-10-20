@@ -208,9 +208,10 @@ type Credential struct {
 }
 
 // invalidator is implemented by a TokenSource that can drop a token
-// the server has refused, so the next Token fetches a new one.
+// the server has refused, so the next Token fetches a new one. It
+// reports whether it dropped it.
 type invalidator interface {
-	invalidate(token string)
+	invalidate(token string) bool
 }
 
 // Resolve reads the secret or finds the Google credentials c declares.
@@ -364,13 +365,22 @@ func (b bearer) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	resp, err := b.base.RoundTrip(b.withToken(req, tok))
 	inv, ok := b.cred.tokens.(invalidator)
-	if err != nil || !ok || resp.StatusCode != http.StatusUnauthorized || (req.Body != nil && req.Body != http.NoBody && req.GetBody == nil) {
+	if err != nil || !ok || resp.StatusCode != http.StatusUnauthorized || !inv.invalidate(tok) {
 		return resp, err
 	}
-	inv.invalidate(tok)
+	// The refused token is dropped whether or not this request can be
+	// resent, so the next request fetches a new one either way.
+	if req.Body != nil && req.Body != http.NoBody && req.GetBody == nil {
+		return resp, nil
+	}
 	fresh, err := b.cred.Token(req.Context())
-	if err != nil || fresh == tok {
-		// No better token to try: the 401 stands.
+	if err != nil {
+		// Say why there is no new token: the token endpoint's answer
+		// names what to fix, the gateway's 401 does not.
+		_ = resp.Body.Close()
+		return nil, fmt.Errorf("auth: %s: the server refused the token (401) and fetching a new one failed: %w", b.cred, err)
+	}
+	if fresh == tok {
 		return resp, nil
 	}
 	retry := req

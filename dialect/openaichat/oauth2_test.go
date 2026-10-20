@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -30,14 +29,14 @@ import (
 	"github.com/go-steer/core-models/llm"
 )
 
-// oauthCredential resolves an OAuth2 client-credentials credential
-// against a fake token endpoint that issues tok-1, tok-2, ….
-func oauthCredential(t *testing.T) (*auth.Credential, *atomic.Int32) {
-	t.Helper()
-	var n atomic.Int32
+// An OAuth2 client-credentials token reaches the server as a bearer, and
+// a 401 on a token fetched moments ago is returned rather than answered
+// with a new token per request (auth's 401 tests cover the re-fetch).
+func TestAnOAuth2TokenIsSentAsABearer(t *testing.T) {
+	var issued atomic.Int32
 	idp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprintf(w, `{"access_token":"tok-%d","token_type":"bearer","expires_in":3600}`, n.Add(1))
+		_, _ = fmt.Fprintf(w, `{"access_token":"tok-%d","token_type":"bearer","expires_in":3600}`, issued.Add(1))
 	}))
 	t.Cleanup(idp.Close)
 	cred, err := auth.Config{
@@ -47,42 +46,20 @@ func oauthCredential(t *testing.T) (*auth.Credential, *atomic.Int32) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return cred, &n
-}
-
-func TestA401FetchesANewTokenAndRetriesOnce(t *testing.T) {
-	cred, issued := oauthCredential(t)
-	// The gateway has revoked tok-1 early: it refuses it and accepts tok-2.
 	s := newServer(t,
-		reply{status: http.StatusUnauthorized, body: `{"error":{"message":"token revoked","type":"invalid_request_error"}}`},
 		reply{body: okReply},
+		reply{status: http.StatusUnauthorized, body: `{"error":{"message":"not entitled","type":"invalid_request_error"}}`},
 	)
 	m := client(t, s, func(o *openaichat.Options) { o.Credential = cred }).Model("m")
-	r := complete(t, m, &llm.Request{Contents: []*genai.Content{userText("hi")}})
-	if got := r.Content.Parts[0].Text; got != "ok" {
-		t.Fatalf("answer = %q", got)
+	req := &llm.Request{Contents: []*genai.Content{userText("hi")}}
+	complete(t, m, req)
+	if got := s.headers[0].Get("Authorization"); got != "Bearer tok-1" {
+		t.Fatalf("Authorization = %q", got)
 	}
-	if got := []string{s.headers[0].Get("Authorization"), s.headers[1].Get("Authorization")}; got[0] != "Bearer tok-1" || got[1] != "Bearer tok-2" {
-		t.Fatalf("Authorization = %q, want tok-1 then tok-2", got)
+	if err := generateErr(m, req, false); err == nil {
+		t.Fatal("a 401 succeeded")
 	}
-	if s.body(1)["model"] != "m" {
-		t.Fatalf("the retried request lost its body: %v", s.body(1))
-	}
-	if n := issued.Load(); n != 2 {
-		t.Fatalf("tokens issued = %d, want 2", n)
-	}
-}
-
-func TestA401ThatPersistsIsReturnedAfterOneRetry(t *testing.T) {
-	cred, issued := oauthCredential(t)
-	refuse := reply{status: http.StatusUnauthorized, body: `{"error":{"message":"not allowed","type":"invalid_request_error"}}`}
-	s := newServer(t, refuse, refuse, refuse, refuse)
-	m := client(t, s, func(o *openaichat.Options) { o.Credential = cred }).Model("m")
-	err := generateErr(m, &llm.Request{Contents: []*genai.Content{userText("hi")}}, false)
-	if err == nil || !strings.Contains(err.Error(), "401") {
-		t.Fatalf("err = %v, want the 401", err)
-	}
-	if len(s.bodies) != 2 || issued.Load() != 2 {
-		t.Fatalf("requests = %d, tokens = %d: want exactly one re-fetch and one retry", len(s.bodies), issued.Load())
+	if len(s.bodies) != 2 || issued.Load() != 1 {
+		t.Fatalf("requests = %d, tokens = %d: want 2 and 1", len(s.bodies), issued.Load())
 	}
 }

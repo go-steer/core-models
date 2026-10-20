@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"mime"
 	"net/http"
 	"net/url"
@@ -45,6 +46,18 @@ const (
 	// maxEarly is the most a token is refreshed ahead of its expiry; a
 	// short-lived token refreshes a tenth of its lifetime early instead.
 	maxEarly = time.Minute
+	// refreshBackoff spaces background refreshes after one fails, so a
+	// token endpoint that is down is not asked again on every request
+	// while the current token is still good.
+	refreshBackoff = 5 * time.Second
+	// minTokenAge is how old a token must be before a 401 drops it. A
+	// server that refuses a token fetched moments ago is refusing the
+	// client, not the token's age; fetching another per request would
+	// only load the token endpoint and churn the token for every caller.
+	minTokenAge = 10 * time.Second
+	// maxLifetime caps expires_in, so a nonsensical value can't overflow
+	// time.Duration.
+	maxLifetime = 365 * 24 * time.Hour
 )
 
 // clientCredentials is an OAuth2ClientCredentials TokenSource: one
@@ -68,6 +81,9 @@ type clientCredentials struct {
 	// the token's real end. Both are zero when the server gave no
 	// expires_in: the token is kept until a server refuses it.
 	refresh, expiry time.Time
+	// issued is when the cached token was fetched; nextTry holds back a
+	// background refresh after one failed.
+	issued, nextTry time.Time
 	inflight        *tokenCall
 }
 
@@ -124,12 +140,25 @@ func (s *clientCredentials) String() string {
 // GoString keeps %#v from printing the secret.
 func (s *clientCredentials) GoString() string { return s.String() }
 
-// Token returns the cached token, or fetches one when there is none or
-// it is due for refresh. Callers that arrive during a fetch share it.
+// Token returns the cached token, or fetches one when there is none.
+// A token due for refresh but not yet expired is returned at once while
+// a new one is fetched in the background, so a slow or failing token
+// endpoint delays no request until the token really runs out. Callers
+// that arrive during a blocking fetch share it.
 func (s *clientCredentials) Token(ctx context.Context) (string, error) {
 	s.mu.Lock()
-	if s.token != "" && (s.refresh.IsZero() || s.now().Before(s.refresh)) {
+	now := s.now()
+	if s.token != "" && (s.refresh.IsZero() || now.Before(s.refresh)) {
 		tok := s.token
+		s.mu.Unlock()
+		return tok, nil
+	}
+	if s.token != "" && now.Before(s.expiry) {
+		tok := s.token
+		if s.inflight == nil && !now.Before(s.nextTry) {
+			s.inflight = &tokenCall{done: make(chan struct{})}
+			go s.fetch(context.WithoutCancel(ctx), s.inflight)
+		}
 		s.mu.Unlock()
 		return tok, nil
 	}
@@ -142,30 +171,23 @@ func (s *clientCredentials) Token(ctx context.Context) (string, error) {
 	s.mu.Unlock()
 	select {
 	case <-call.done:
+		return call.token, call.err
 	case <-ctx.Done():
 		return "", ctx.Err()
 	}
-	if call.err != nil {
-		// A refresh ahead of expiry that failed leaves the current token
-		// good until it expires; use it, and the next call tries again.
-		s.mu.Lock()
-		tok, live := s.token, s.token != "" && !s.expiry.IsZero() && s.now().Before(s.expiry)
-		s.mu.Unlock()
-		if live {
-			return tok, nil
-		}
-	}
-	return call.token, call.err
 }
 
-// invalidate drops tok if it is still the cached token. A token another
-// caller has already replaced stays.
-func (s *clientCredentials) invalidate(tok string) {
+// invalidate drops tok if it is still the cached token and is old
+// enough that a refusal can be about its age (minTokenAge), and reports
+// whether it did. A token another caller has already replaced stays.
+func (s *clientCredentials) invalidate(tok string) bool { //nolint:unparam // read through the invalidator interface by bearer
 	s.mu.Lock()
-	if s.token == tok {
-		s.token, s.refresh, s.expiry = "", time.Time{}, time.Time{}
+	defer s.mu.Unlock()
+	if s.token != tok || s.now().Sub(s.issued) < minTokenAge {
+		return false
 	}
-	s.mu.Unlock()
+	s.token, s.refresh, s.expiry = "", time.Time{}, time.Time{}
+	return true
 }
 
 func (s *clientCredentials) fetch(ctx context.Context, call *tokenCall) {
@@ -175,11 +197,13 @@ func (s *clientCredentials) fetch(ctx context.Context, call *tokenCall) {
 	tok, life, err := s.exchange(ctx)
 	s.mu.Lock()
 	if err == nil {
-		s.token, s.refresh, s.expiry = tok, time.Time{}, time.Time{}
+		s.token, s.issued, s.refresh, s.expiry = tok, issued, time.Time{}, time.Time{}
 		if life > 0 {
 			s.expiry = issued.Add(life)
 			s.refresh = s.expiry.Add(-min(maxEarly, life/10))
 		}
+	} else {
+		s.nextTry = s.now().Add(refreshBackoff)
 	}
 	s.inflight = nil
 	s.mu.Unlock()
@@ -224,42 +248,75 @@ func (s *clientCredentials) exchange(ctx context.Context) (string, time.Duration
 	if err != nil {
 		return "", 0, s.fail(fmt.Errorf("reading the answer: %w", err))
 	}
-	if resp.StatusCode != http.StatusOK {
-		return "", 0, s.fail(fmt.Errorf("HTTP %d%s", resp.StatusCode, oauthError(body)))
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		err := s.fail(fmt.Errorf("HTTP %d%s", resp.StatusCode, oauthError(body)))
+		// A refusal (a wrong or rotated secret, an unknown client) will
+		// be refused again; a timeout, rate limit or server error may not.
+		if resp.StatusCode >= 400 && resp.StatusCode < 500 && resp.StatusCode != http.StatusRequestTimeout && resp.StatusCode != http.StatusTooManyRequests {
+			return "", 0, permanentError{err}
+		}
+		return "", 0, err
 	}
-	if ct, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type")); ct != "" && ct != "application/json" {
-		return "", 0, s.fail(fmt.Errorf("answered %s, not JSON", ct))
-	}
-	var tr struct {
-		AccessToken string          `json:"access_token"`
-		TokenType   string          `json:"token_type"`
-		ExpiresIn   json.RawMessage `json:"expires_in"`
-	}
-	if err := json.Unmarshal(body, &tr); err != nil {
+	tok, typ, life, ok := parseTokenResponse(body, resp.Header.Get("Content-Type"))
+	if !ok {
 		return "", 0, s.fail(errors.New("the answer is not a token response"))
 	}
-	if tr.AccessToken == "" {
+	if tok == "" {
 		return "", 0, s.fail(errors.New("the answer has no access_token"))
 	}
-	if tr.TokenType != "" && !strings.EqualFold(tr.TokenType, "bearer") {
-		return "", 0, s.fail(fmt.Errorf("token_type %q is not bearer", tr.TokenType))
+	// Servers spell bearer variously (Apigee Edge says "BearerToken"), so
+	// only types known to need more than a bearer header are refused.
+	switch strings.ToLower(typ) {
+	case "mac", "dpop", "pop":
+		return "", 0, permanentError{s.fail(fmt.Errorf("token_type %q needs proof of possession, which is not supported", typ))}
 	}
-	return tr.AccessToken, expiresIn(tr.ExpiresIn), nil
+	return tok, life, nil
 }
 
 func (s *clientCredentials) fail(err error) error {
 	return fmt.Errorf("auth: %s: token endpoint: %w", s, err)
 }
 
-// expiresIn reads expires_in, which some servers send as a string. Zero
-// means none was given.
-func expiresIn(raw json.RawMessage) time.Duration {
-	v := strings.Trim(string(raw), `"`)
-	n, err := strconv.ParseInt(v, 10, 64)
-	if err != nil || n <= 0 {
+// permanentError marks a token endpoint answer that retrying will not
+// change. Package retry reads Permanent and does not resend the request.
+type permanentError struct{ error }
+
+func (e permanentError) Unwrap() error   { return e.error }
+func (e permanentError) Permanent() bool { return true }
+
+// parseTokenResponse reads an RFC 6749 §5.1 token response: JSON, or the
+// form encoding some older servers send.
+func parseTokenResponse(body []byte, contentType string) (token, typ string, life time.Duration, ok bool) {
+	var tr struct {
+		AccessToken string          `json:"access_token"`
+		TokenType   string          `json:"token_type"`
+		ExpiresIn   json.RawMessage `json:"expires_in"`
+	}
+	if err := json.Unmarshal(body, &tr); err == nil {
+		return tr.AccessToken, tr.TokenType, expiresIn(strings.Trim(string(tr.ExpiresIn), `"`)), true
+	}
+	ct, _, _ := mime.ParseMediaType(contentType)
+	if ct != "application/x-www-form-urlencoded" && ct != "text/plain" {
+		return "", "", 0, false
+	}
+	v, err := url.ParseQuery(string(body))
+	if err != nil {
+		return "", "", 0, false
+	}
+	return v.Get("access_token"), v.Get("token_type"), expiresIn(v.Get("expires_in")), true
+}
+
+// expiresIn reads expires_in in seconds, which servers send as an
+// integer, a decimal or a string of either. Zero means none was given.
+func expiresIn(v string) time.Duration {
+	f, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
+	if err != nil || math.IsNaN(f) || f <= 0 {
 		return 0
 	}
-	return time.Duration(n) * time.Second
+	if f > maxLifetime.Seconds() {
+		return maxLifetime
+	}
+	return time.Duration(f * float64(time.Second))
 }
 
 // oauthError is the RFC 6749 §5.2 error in a token endpoint's answer,

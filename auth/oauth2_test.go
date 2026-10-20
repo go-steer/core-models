@@ -77,6 +77,12 @@ func newTokenServer(t *testing.T, expiresIn string) *tokenServer {
 	return ts
 }
 
+func (ts *tokenServer) requests() int {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+	return len(ts.forms)
+}
+
 func (ts *tokenServer) config() Config {
 	return Config{
 		Kind:            OAuth2ClientCredentials,
@@ -138,13 +144,29 @@ func TestClientCredentialsRefreshesBeforeExpiry(t *testing.T) {
 	if got := token(t, s); got != "tok-1" {
 		t.Fatalf("at 58m token = %q, want the cached tok-1", got)
 	}
+	// Due for refresh: the still-valid token comes back at once while a
+	// new one is fetched in the background.
 	clk.add(90 * time.Second)
-	if got := token(t, s); got != "tok-2" {
-		t.Fatalf("at 59m30s token = %q, want a refreshed tok-2", got)
+	if got := token(t, s); got != "tok-1" {
+		t.Fatalf("at 59m30s token = %q, want tok-1 returned without waiting", got)
 	}
+	waitFor(t, s, "tok-2")
 	if n := ts.n.Load(); n != 2 {
 		t.Fatalf("token requests = %d, want 2", n)
 	}
+}
+
+// waitFor polls until the background refresh has installed want.
+func waitFor(t *testing.T, s *clientCredentials, want string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if got := token(t, s); got == want {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("token never became %q", want)
 }
 
 func TestClientCredentialsShortLivedTokenRefreshesATenthEarly(t *testing.T) {
@@ -156,9 +178,8 @@ func TestClientCredentialsShortLivedTokenRefreshesATenthEarly(t *testing.T) {
 		t.Fatalf("at 269s token = %q, want tok-1", got)
 	}
 	clk.add(2 * time.Second)
-	if got := token(t, s); got != "tok-2" {
-		t.Fatalf("at 271s token = %q, want tok-2 (refresh 30s before a 300s expiry)", got)
-	}
+	token(t, s) // starts the refresh 30s before a 300s expiry
+	waitFor(t, s, "tok-2")
 }
 
 func TestClientCredentialsWithoutExpiryKeepsTheTokenUntilRefused(t *testing.T) {
@@ -208,12 +229,30 @@ func TestClientCredentialsConcurrentCallersShareOneRefresh(t *testing.T) {
 
 func TestClientCredentialsFailedEarlyRefreshKeepsTheLiveToken(t *testing.T) {
 	ts := newTokenServer(t, "3600")
+	ts.delay = 20 * time.Millisecond
 	s, clk := source(t, ts, nil)
 	token(t, s)
 	ts.fail.Store(true)
 	clk.add(59*time.Minute + 30*time.Second) // due for refresh, not expired
 	if got := token(t, s); got != "tok-1" {
 		t.Fatalf("token = %q, want tok-1 while it is still valid", got)
+	}
+	// Let the background refresh fail, then show the backoff holds:
+	// a burst of requests asks the token endpoint nothing more.
+	deadline := time.Now().Add(5 * time.Second)
+	for ts.requests() < 2 || s.inflightNow() {
+		if time.Now().After(deadline) {
+			t.Fatal("the background refresh never ran")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	for range 20 {
+		if got := token(t, s); got != "tok-1" {
+			t.Fatalf("token = %q during backoff", got)
+		}
+	}
+	if n := ts.requests(); n != 2 {
+		t.Fatalf("token requests = %d, want 2: no retry inside the backoff", n)
 	}
 	clk.add(time.Minute) // now expired
 	if _, err := s.Token(context.Background()); err == nil || !strings.Contains(err.Error(), "invalid_client") {
@@ -303,5 +342,49 @@ func TestClientCredentialsFailsAtResolve(t *testing.T) {
 	}
 	if n := ts.n.Load(); n != 0 {
 		t.Fatalf("token requests = %d for configurations that should fail first", n)
+	}
+}
+
+func (s *clientCredentials) inflightNow() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.inflight != nil
+}
+
+func TestTokenResponseShapes(t *testing.T) {
+	for name, tc := range map[string]struct {
+		body, ct string
+		tok      string
+		life     time.Duration
+		ok       bool
+	}{
+		"json":          {`{"access_token":"a","token_type":"bearer","expires_in":3600}`, "application/json", "a", time.Hour, true},
+		"apigee":        {`{"access_token":"a","token_type":"BearerToken","expires_in":"3599"}`, "application/json;charset=UTF-8", "a", 3599 * time.Second, true},
+		"decimal":       {`{"access_token":"a","expires_in":3600.0}`, "text/plain", "a", time.Hour, true},
+		"json as text":  {`{"access_token":"a"}`, "text/plain", "a", 0, true},
+		"form":          {`access_token=a&token_type=bearer&expires_in=60`, "application/x-www-form-urlencoded", "a", time.Minute, true},
+		"huge expiry":   {`{"access_token":"a","expires_in":1e30}`, "application/json", "a", maxLifetime, true},
+		"html":          {`<html>login</html>`, "text/html", "", 0, false},
+		"negative":      {`{"access_token":"a","expires_in":-5}`, "application/json", "a", 0, true},
+		"nan as string": {`{"access_token":"a","expires_in":"NaN"}`, "application/json", "a", 0, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			tok, _, life, ok := parseTokenResponse([]byte(tc.body), tc.ct)
+			if ok != tc.ok || tok != tc.tok || life != tc.life {
+				t.Fatalf("parse = %q, %v, %v; want %q, %v, %v", tok, life, ok, tc.tok, tc.life, tc.ok)
+			}
+		})
+	}
+}
+
+func TestProofOfPossessionTokensAreRefused(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"access_token":"a","token_type":"DPoP"}`)
+	}))
+	t.Cleanup(srv.Close)
+	c := Config{Kind: OAuth2ClientCredentials, TokenURL: srv.URL, ClientIDEnv: "GW_ID", ClientSecretEnv: "GW_SECRET"}
+	if _, err := c.Resolve(context.Background(), Options{Getenv: testEnv}); err == nil || !strings.Contains(err.Error(), "proof of possession") {
+		t.Fatalf("Resolve = %v", err)
 	}
 }

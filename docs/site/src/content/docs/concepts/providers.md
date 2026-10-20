@@ -133,10 +133,14 @@ configuration alone:
 
 The first token is fetched when the profile is opened, so a wrong secret
 or an unreachable token endpoint fails then, naming the variables and the
-endpoint's host. The token is cached and refreshed before it expires, so a
-session can run longer than any one token. If the gateway answers 401 (a
-token revoked early), the request is sent once more with a new token. The
-client secret and the tokens never appear in an error or a log line.
+endpoint's host. The token is cached and refreshed in the background
+before it expires, so a session can run longer than any one token and a
+slow token endpoint delays nothing while the current token is good. If the
+gateway answers 401 to a token that is not brand new (revoked early), the
+request is sent once more with a new token. A refused client secret is
+reported, not retried. The client secret and the tokens never appear in an
+error or a log line. The gateway's own metrics endpoint gets the token
+only over https.
 
 ## What "supported" will mean
 

@@ -239,10 +239,14 @@ tiers: {mid: Qwen/Qwen3-Coder-Next}
   variables holding the client id and secret; `scopes`, `audience` and
   `client_auth` (`basic` or `post`) are optional. The first token is
   fetched at `Resolve`, so a wrong secret fails at construction (R1). The
-  token is cached and refreshed a little before `expires_in` (a minute, or
-  a tenth of a short lifetime), concurrent callers share one refresh, and
-  a 401 drops the refused token and resends the request once with a new
-  one. The exchange is hand-written rather than taken from
+  token is cached and refreshed in the background a little before
+  `expires_in` (a minute, or a tenth of a short lifetime), so a slow token
+  endpoint delays no request while the token is still good; a failed
+  refresh backs off for 5 s. Concurrent callers share one fetch. A 401
+  drops the refused token and resends the request once with a new one,
+  unless the token is under 10 s old (then the server is refusing the
+  client, not the token's age). A token endpoint's 4xx refusal marks its
+  error permanent, and `retry` does not resend on a permanent error. The exchange is hand-written rather than taken from
   `golang.org/x/oauth2`, which is not in the core's dependency graph
   (rule #10). The `gemini` dialect refuses it; the OpenAI dialects and
   `anthropic` send the token as a bearer.
