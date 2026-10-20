@@ -120,6 +120,16 @@ type Profile struct {
 	Params map[string]string `json:"params,omitempty" yaml:"params,omitempty"`
 	// Auth is the credential.
 	Auth auth.Config `json:"auth,omitzero" yaml:"auth,omitempty"`
+	// Headers are sent on every request to the model endpoint, for a
+	// gateway that needs one that is not the credential: SAP AI Core's
+	// AI-Resource-Group, an API-management subscription key, a tenant or
+	// routing header, an anthropic-beta opt-in. A value may be ${VAR} or
+	// ${VAR:-default}, read at Resolve; one that comes out empty is not
+	// sent. Credentials and the headers the dialects set themselves
+	// (Content-Type, Accept, User-Agent, …) cannot be set here. Put a
+	// secret value in the environment and reference it, rather than
+	// writing it into the profile.
+	Headers map[string]string `json:"headers,omitempty" yaml:"headers,omitempty"`
 	// Backend is the identity prices are keyed on, beside the model id.
 	// Defaults to Name.
 	Backend string `json:"backend,omitempty" yaml:"backend,omitempty"`
@@ -423,6 +433,9 @@ func (p Profile) Validate() error {
 		if checkURL(stripEnv(p.Auth.TokenURL)) != nil {
 			bad("auth.token_url is not an http or https URL with a host")
 		}
+	}
+	for _, problem := range checkHeaders(p.Headers) {
+		bad("%s", problem)
 	}
 	if p.MetricsURL != "" {
 		if err := checkURL(stripEnv(p.MetricsURL)); err != nil {

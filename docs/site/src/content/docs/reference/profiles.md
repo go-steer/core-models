@@ -42,6 +42,7 @@ A self-hosted vLLM server, starting from the built-in `vllm` template:
 | `auth.client_id_env`, `auth.client_secret_env` | `oauth2_client_credentials`: the variables holding the client id and secret |
 | `auth.audience` | `oauth2_client_credentials`: an `audience` for identity providers that require one. Optional |
 | `auth.client_auth` | `oauth2_client_credentials`: `basic` (HTTP Basic, the default) or `post` (id and secret in the form body) |
+| `headers` | Headers sent on every request to the model endpoint, for a gateway that needs one that isn't the credential: SAP AI Core's `AI-Resource-Group`, an API-management subscription key, a tenant or routing header, an `anthropic-beta` opt-in. Values may be `${VAR}` or `${VAR:-default}`, read at Resolve; a header whose value comes out empty isn't sent. Credentials (`Authorization`, `x-api-key`, `api-key`, `x-goog-api-key`, `x-goog-user-project`) and the headers the dialects set (`Content-Type`, `Accept`, `User-Agent`, `anthropic-version`, …) are refused. Names are case-insensitive and sent in canonical form. See [Headers](#headers) |
 | `backend` | The name prices are keyed on. Defaults to `name`, except that a profile extending `vertex-maas`, `gemini` or `vertex` keeps the built-in's |
 | `open_models` | Accept any model id, not only the listed ones. Set on every self-hosted template |
 | `capabilities` | `response_schema`, `reasoning_echo`, `parallel_tool_calls`, `server_tools`, `streaming`, `forced_tool_choice`. Each is true, false, or unset. Unset reads as absent, except `forced_tool_choice`, which is assumed supported unless declared false |
@@ -60,8 +61,42 @@ rejects a forced tool call. With `forced_tool_choice: false`, a request
 that forces a tool call (`required`, or one named tool) is sent as `auto`
 instead, and the response carries `core_models.tool_choice_downgraded`.
 
-`extends` merges `params` and `tiers` key by key. It replaces `models` and
-`auth` as a whole, and overrides each capability on its own.
+`extends` merges `params`, `headers` and `tiers` key by key (`headers`
+case-insensitively, and an empty value drops an inherited header). It
+replaces `models` and `auth` as a whole, and overrides each capability on
+its own.
+
+## Headers
+
+A gateway in front of a model often wants a header beside the credential.
+An Azure API Management front end, for example:
+
+```json
+[
+  {
+    "name": "apim-vllm",
+    "extends": "vllm",
+    "base_url": "https://models.example.azure-api.net/vllm/v1",
+    "auth": {"kind": "bearer", "env": "APIM_TOKEN"},
+    "headers": {"Ocp-Apim-Subscription-Key": "${APIM_SUBSCRIPTION_KEY}", "X-Tenant": "${TENANT:-shared}"}
+  }
+]
+```
+
+- `Open` sends them on every attempt, retries included, in every dialect.
+  A host that builds a dialect itself instead of through `Open` (for
+  example `gemini.New`, to share one client with its context cache) wraps
+  the `HTTPClient` it passes with `Resolved.HeaderTransport`.
+- They go to the model endpoint only: not to a token endpoint, and not to
+  another host a redirect points to. A `metrics_url` gets them when it is
+  on the API's own scheme and host, by the same rule as the credential.
+- A header the request already carries keeps its value, so a per-call
+  setting wins over the profile's default.
+- A value may be a secret, so keep it in the environment and reference it.
+  A value read from the environment never appears in an error or a printed
+  `Resolved`; one written literally into the profile is part of the
+  profile, like any other field. `Resolved.HeaderNames` lists the names for
+  a host to show.
 
 ## Built-in profiles
 

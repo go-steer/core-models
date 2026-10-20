@@ -135,8 +135,9 @@ type Options struct {
 	// empty reading.
 	Model string
 	// HTTPClient sends the scrape, as given: FromProfile attaches no
-	// credential to a caller's client. Nil means a client with a
-	// 10-second timeout.
+	// credential and no profile headers to a caller's client (wrap its
+	// transport with Resolved.HeaderTransport to send them). Nil means a
+	// client with a 10-second timeout.
 	HTTPClient *http.Client
 	// Now replaces time.Now, for tests.
 	Now func() time.Time
@@ -177,8 +178,9 @@ func New(opts Options) (*Sampler, error) {
 // Google ADC token only over https: a metrics endpoint on another host
 // gets no token meant for the API. It is sent the way package auth sends
 // it to the API (BearerTransport: "Authorization: Bearer", for an API key
-// too). An endpoint that needs a different credential takes a caller's
-// opts.HTTPClient, to which nothing is added.
+// too). The profile's headers follow the same origin rule, without the
+// https condition. An endpoint that needs a different credential takes a
+// caller's opts.HTTPClient, to which nothing is added.
 func FromProfile(r *profile.Resolved, opts Options) (*Sampler, error) {
 	if r.MetricsURL == "" {
 		return nil, fmt.Errorf("kvmetrics: profile %q declares no metrics_url", r.Profile.Name)
@@ -186,7 +188,11 @@ func FromProfile(r *profile.Resolved, opts Options) (*Sampler, error) {
 	opts.URL, opts.Format = r.MetricsURL, r.Profile.Metrics
 	if opts.HTTPClient == nil {
 		rt := http.DefaultTransport
-		if attachCredential(r) {
+		metrics, same := sameOrigin(r)
+		if same {
+			rt = r.HeaderTransport(rt)
+		}
+		if same && attachCredential(r, metrics) {
 			rt = r.Credential.BearerTransport(rt)
 		}
 		opts.HTTPClient = &http.Client{Timeout: 10 * time.Second, Transport: rt}
@@ -199,20 +205,25 @@ func FromProfile(r *profile.Resolved, opts Options) (*Sampler, error) {
 }
 
 // attachCredential reports whether a profile's credential may go to its
-// metrics endpoint: same origin as the API, and https for a Google ADC
-// token.
-func attachCredential(r *profile.Resolved) bool {
+// same-origin metrics endpoint: always, except a Google or OAuth2 access
+// token over plain http.
+func attachCredential(r *profile.Resolved, metrics *url.URL) bool {
 	if r.Credential == nil || r.Credential.Kind() == auth.None {
 		return false
 	}
+	k := r.Credential.Kind()
+	return (k != auth.GoogleADC && k != auth.OAuth2ClientCredentials) || strings.EqualFold(metrics.Scheme, "https")
+}
+
+// sameOrigin reports whether a profile's metrics endpoint shares its
+// API's scheme and host (port included), returning the parsed endpoint.
+func sameOrigin(r *profile.Resolved) (*url.URL, bool) {
 	m, err1 := url.Parse(r.MetricsURL)
 	b, err2 := url.Parse(r.BaseURL)
-	if err1 != nil || err2 != nil || !strings.EqualFold(m.Scheme, b.Scheme) || !strings.EqualFold(m.Host, b.Host) {
-		return false
+	if err1 != nil || err2 != nil {
+		return nil, false
 	}
-	// A Google or OAuth2 access token goes only over https.
-	k := r.Credential.Kind()
-	return (k != auth.GoogleADC && k != auth.OAuth2ClientCredentials) || strings.EqualFold(m.Scheme, "https")
+	return m, strings.EqualFold(m.Scheme, b.Scheme) && strings.EqualFold(m.Host, b.Host)
 }
 
 // Snapshot scrapes the endpoint once.
