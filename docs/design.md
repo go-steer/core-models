@@ -5,6 +5,7 @@ mast (#510, #521) and core-agent (#1294, #1296) running on the library, and
 `adkv1` deprecated in v0.6.6 and since deleted. The decisions in [§2](#2-settled-decisions) were
 settled with the maintainer on 2026-10-08. Everything else is the proposed shape,
 and it changes as the open questions in [§13](#13-open-questions) are answered.
+[§14](#14-road-to-v10) lists what v1.0 needs.
 
 **Inputs:**
 - [mast `docs/model-support-design.md`](https://github.com/go-steer/mast/blob/main/docs/model-support-design.md)
@@ -700,7 +701,7 @@ Choices the design left open:
 | **L3'** | **core-agent adopts L1–L3** through `adkv1`: `models.Register` gains profile-backed providers, `config.json` gains a profile section, and `--provider` opens up | core-agent `--provider vllm --model …` drives a tool loop; existing Gemini and Anthropic paths unchanged. *Done 2026-10-10 (core-agent #1294), before L2 and L3 (both since built)* |
 | **L4** | Extract Anthropic (first-party and Vertex), merging in core-agent's caching and sidecar; both products switch | Both products' toolwire and cache-accounting tests green on the library adapter, including mast's #352 measured-turn fixture and core-agent's 1-hour-TTL accounting; core-agent prompt caching available to mast. *Done 2026-10-12: library side 2026-10-10 (§7.3 "As built"); mast #521 and core-agent #1296 switched, with judged-eval and live parity* |
 | **L5** | Extract Gemini and vertexcache, merging in core-agent's retry and cache handling; both products switch | mast's `IncludeServerSideToolInvocations` finding closed ([§12](#12-findings-from-the-inventory)); mast's #325 and core-agent's #902 eviction tests both green on the one verdict; core-agent's retry tests green on the library. *Done 2026-10-12 (mast #521, core-agent #1296)* |
-| **L6** | Pricing merge ([§9](#9-pricing-l6)) | One catalog; mast's backend-shape tests and core-agent's 1-hour-TTL tests both pass against it. *Library half done 2026-10-13 (both test sets pass in `pricing/`); mast adopted it (mast #544); core-agent owed* |
+| **L6** | Pricing merge ([§9](#9-pricing-l6)) | One catalog; mast's backend-shape tests and core-agent's 1-hour-TTL tests both pass against it. *Library half done 2026-10-13 (both test sets pass in `pricing/`); mast adopted it (mast #544) and core-agent adopted it (core-agent #1328, on v0.13.3 since #1330)* |
 | **P1** | Bedrock Claude, Azure OpenAI, long-tail built-in profiles, NIM | Each has a tier map, catalog rows and a live smoke, or ships as an unvalidated template |
 
 **L5 status (2026-10-10).** The library half is done: package `dialect/gemini`
@@ -788,3 +789,51 @@ out at that point.
   break the promise. Should mast still require core-models v1 before mast v1.x
   names it in any exported type? This design assumes no exported mast type ever
   mentions a core-models type.
+
+## 14. Road to v1.0
+
+*Proposed 2026-10-15. Each criterion is tracked by an issue in the
+[v1.0 milestone](https://github.com/go-steer/core-models/milestone/1), and
+the maintainer decides each one. The API surface inventory these criteria rest
+on is on the docs site's
+[API surface](https://go-steer.github.io/core-models/reference/api-surface/)
+page.*
+
+**Why and when v1.0 matters.** By [Q8](#13-open-questions), no exported mast
+type names a core-models type, so mast can freeze its own v1 surface while it
+imports a v0 core-models. v1.0 matters when either of these happens:
+- someone outside the two products imports the library;
+- the products want a promise that a bump never breaks them.
+
+Until then, a minor release may break the API, and the CHANGELOG says so under
+**API Change**.
+
+| # | Criterion | Exit condition | Issue |
+|---|---|---|---|
+| 1 | **A deliberate public API.** Every package is classified stable, experimental or internal, and the flagged names are resolved | Every exported name has a stated status. CI blocks an unlabelled breaking change to a stable package (`gorelease`/`apidiff`) | [#68](https://github.com/go-steer/core-models/issues/68) |
+| 2 | **The genai/ADK type coupling is decided.** `llm` carries genai types, as do `toolwire` and parts of `dialect/gemini` | A recorded decision in [§2](#2-settled-decisions): either a genai breaking change means a core-models major, or the boundary gets its own types | [#69](https://github.com/go-steer/core-models/issues/69) |
+| 3 | **One typed error contract.** Every dialect's errors answer one classification from a dependency-free package | Neither product matches on a core-models error's text | [#70](https://github.com/go-steer/core-models/issues/70) |
+| 4 | **A versioning rule for price data** | A documented rule that the weekly regen applies without a human classifying each PR | [#71](https://github.com/go-steer/core-models/issues/71) |
+| 5 | **The open questions that shape the API are answered:** [Q2](#13-open-questions) (tiers), Q3 (price dimensions), Q6 (governance, cadence, deprecation, Go versions) and Q7 (retry posture) | Each is marked answered in §13 and reflected in the API | [#72](https://github.com/go-steer/core-models/issues/72), [#73](https://github.com/go-steer/core-models/issues/73), [#74](https://github.com/go-steer/core-models/issues/74), [#75](https://github.com/go-steer/core-models/issues/75) |
+| 6 | **A public conformance kit** *(optional for v1)* | A `conformance` package the repo's own tests use, or a decision to defer it to v1.x | [#76](https://github.com/go-steer/core-models/issues/76) |
+| 7 | **A stability soak** | Six consecutive weeks with no **API Change** release, both products on the latest release within a week of each tag, the live canary green on every run, and every weekly regen merged without a hand edit | [#77](https://github.com/go-steer/core-models/issues/77) |
+
+**Not gating.** The P1 providers ([§11](#11-phases): Bedrock Claude, Azure
+OpenAI, the long-tail profiles, NIM) are additive and can land in v1.x. Q1 and
+Q4 are product or deployment choices that don't change the API. Q8 is answered
+above.
+
+**Proposed price-data rule** (criterion 4, for decision):
+- **Patch:**
+  - a rate value changes;
+  - a row or context window is added;
+  - a regen with no code change.
+- **Minor before v1, major after, with a "Pricing behavior" CHANGELOG section:**
+  - a row or context window is removed;
+  - lookup precedence or layer order changes;
+  - the key format changes;
+  - `SchemaVersion` or `ExternalFormat` changes;
+  - `Refresh` semantics change;
+  - the generator's eligibility rules change.
+
+v0.13.1–v0.13.3 were all in the second category.
