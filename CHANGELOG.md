@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.14.0 (2026-10-20)
+
 ### Added
 
 - **`auth.kind: oauth2_client_credentials`** (#81), for a model behind an
