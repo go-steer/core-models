@@ -470,7 +470,13 @@ func Resolve(ctx context.Context, p Profile, opts Options) (*Resolved, error) {
 	if authOpts.Getenv == nil {
 		authOpts.Getenv = getenv
 	}
-	cred, err := p.Auth.Resolve(ctx, authOpts)
+	authCfg := p.Auth
+	if authCfg.TokenURL != "" {
+		if authCfg.TokenURL, err = expandEnv(authCfg.TokenURL, getenv); err != nil {
+			return nil, fail("auth.token_url: %w", err)
+		}
+	}
+	cred, err := authCfg.Resolve(ctx, authOpts)
 	if err != nil {
 		return nil, fail("%w", err)
 	}

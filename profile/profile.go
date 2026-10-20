@@ -416,6 +416,11 @@ func (p Profile) Validate() error {
 	if err := p.Auth.Validate(); err != nil {
 		bad("%v", err)
 	}
+	if p.Auth.TokenURL != "" {
+		if err := checkURL(stripEnv(p.Auth.TokenURL)); err != nil {
+			bad("auth.token_url: %v", err)
+		}
+	}
 	if p.MetricsURL != "" {
 		if err := checkURL(stripEnv(p.MetricsURL)); err != nil {
 			bad("metrics_url: %v", err)
