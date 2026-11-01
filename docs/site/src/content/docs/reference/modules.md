@@ -79,7 +79,7 @@ Exceptions are made for security fixes:
 | `google.golang.org/grpc` v1.83.1 | GO-2026-6348. Both products were already at or above it |
 | `golang.org/x/net` v0.60.0 | GO-2026-6611, -6612 and -6617 (HTTP/2). This raises both products' floor, to the fixed version |
 
-Each `go.mod` also carries `toolchain go1.26.9` for the standard library's
-fixes to the same HTTP/2 issues. A `toolchain` line governs only this
+Each `go.mod` also carries `toolchain go1.26.10` for the standard library's
+fixes to the HTTP/2 and `crypto/x509` issues. A `toolchain` line governs only this
 repository's own builds and CI; it is not imposed on consumers. They need
-Go 1.26.9 or later in their own builds to be clear of those issues.
+Go 1.26.10 or later in their own builds to be clear of those issues.

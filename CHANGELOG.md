@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## v0.15.1 (2026-11-01)
+
+### Changed
+
+- **The built-in table is regenerated:** `gemini/gemini-gemma-2-27b-it`,
+  `gemini/gemini-gemma-2-9b-it` and `openai/gpt-6-astra-law` are added; no row
+  is removed and no rate moved.
+- **`toolchain` moves to `go1.26.10`** in both modules for the standard
+  library's `crypto/x509` fix.
+
 ## v0.15.0 (2026-10-20)
 
 ### Added

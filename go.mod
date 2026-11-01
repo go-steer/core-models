@@ -2,7 +2,7 @@ module github.com/go-steer/core-models
 
 go 1.26.6
 
-toolchain go1.26.9
+toolchain go1.26.10
 
 require (
 	cloud.google.com/go/auth v0.18.2
