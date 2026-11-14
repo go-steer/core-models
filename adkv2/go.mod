@@ -2,10 +2,10 @@ module github.com/go-steer/core-models/adkv2
 
 go 1.26.6
 
-toolchain go1.26.10
+toolchain go1.26.11
 
 require (
-	github.com/go-steer/core-models v0.15.1
+	github.com/go-steer/core-models v0.15.3
 	google.golang.org/adk/v2 v2.2.0
 	google.golang.org/genai v1.66.0
 )

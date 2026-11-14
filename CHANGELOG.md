@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+## v0.15.3 (2026-11-14)
+
+### Changed
+
+- **The built-in table is regenerated**, adding Google's new Gemini 4
+  models and Anthropic's 5.2 models. No row is removed and no rate moved.
+  - `gemini-4-carbon` ($2/$10 per MTok, $0.10 cached) and
+    `gemini-4-hydrogen` ($1.50/$7.50, $0.075 cached), each with bare,
+    `gemini/` and `vertex/` rows and a 1,048,576-token window, plus
+    `gemini-4-carbon-cyber-permissive` ($4/$20) and
+    `gemini-3.8-flash-cyber` ($1.50/$7.50). LiteLLM lists the Gemini 4
+    models only under provider prefixes; the prefix-only pass (v0.13.1)
+    picks them up. Both are verified live on the Gemini API and on Vertex AI
+    (`global` only; us-central1 returns 404): the shared text, tool round
+    trip and streaming scenarios pass, thinking tokens are reported
+    separately from the answer, and, like Gemini 4 Argon, neither supports
+    explicit context caching, which `vertexcache` handles since v0.13.4.
+  - `claude-fable-5-2` and `claude-mythos-5-2` ($8/$40 per MTok), bare,
+    `anthropic/` and `anthropic-vertex/`, with 1,000,000-token windows.
+- **`toolchain` moves to `go1.26.11`** in both modules for the standard
+  library's `net/http` fix (GO-2026-6859). Consumers need Go 1.26.11 or
+  later in their own builds to be clear of it.
+
+## v0.15.2 (2026-11-06)
+
+### Changed
+
+- **The built-in table is regenerated** (#99): `openai/gpt-6-cyber` is added.
+  Tagged for the core module only; `adkv2` stays at v0.15.1, whose
+  requirement is satisfied by it. *(Entry added with v0.15.3.)*
+
 ## v0.15.1 (2026-11-01)
 
 ### Changed

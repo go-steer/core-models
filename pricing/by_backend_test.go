@@ -196,6 +196,10 @@ var vertexOnlyGemini = map[string]string{
 		"same regen",
 	"gemini-4-argon-cyber-permissive": "LiteLLM lists it as vertex_ai/ only (2026-10-13); " +
 		"an access-gated variant of gemini-4-argon",
+	"gemini-4-carbon-cyber-permissive": "LiteLLM lists it as vertex_ai/ only (2026-11-14); " +
+		"an access-gated variant of gemini-4-carbon",
+	"gemini-3.8-flash-cyber": "LiteLLM lists it bare and as vertex_ai/ only, and the Gemini API " +
+		"doesn't list it (2026-11-14)",
 }
 
 // Every model is priced on the backend that actually serves it. Claude
