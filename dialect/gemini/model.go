@@ -71,6 +71,7 @@ func (m *baseModel) GenerateContent(ctx context.Context, req *llm.Request, strea
 	if name == "" {
 		name = m.name
 	}
+	cfg.ThinkingConfig = fitThinking(name, cfg.ThinkingConfig)
 	return func(yield func(*llm.Response, error) bool) {
 		ctx, rec := retry.WithRecord(ctx)
 		if !stream {

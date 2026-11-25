@@ -497,7 +497,9 @@ reasoning. Usage maps `input_tokens_details.cached_tokens` and
   plain reasoning, or another provider's signature — is not replayed: with
   `store: false`, OpenAI accepts a reasoning item only with its encrypted
   content.
-- **`reasoning`:** `ThinkingLevel` maps to `effort` directly. A
+- **`reasoning`:** `ThinkingLevel` maps to `effort` directly, except
+  `XHIGH` and `llm.ThinkingLevelMax`, which send `high`, the top effort
+  every reasoning model takes (see "Thinking level" below). A
   `ThinkingBudget` is not mapped, not even zero: the API has no token budget,
   and the value that means "no reasoning" differs by model (`minimal`, `none`,
   or neither), so thinking off is expressible only as a `ThinkingLevel`.
@@ -648,6 +650,48 @@ OpenAI rides on L1 and L2 through `openai-go/azure`. Both are P1, after L5.
   2026-11-25). The adapter needs v1.76.0 or later for
   `thinking.type: between_tools`, Claude Sonnet 5.5's way to turn thinking
   off.
+
+### Thinking level
+
+*(Added 2026-11-25.)* `genai.ThinkingConfig.ThinkingLevel` is core-models'
+provider-neutral thinking control. A product sets one level and each adapter
+maps it onto what the model accepts, so a workload can name a level without
+knowing the provider's shape for it. genai names `MINIMAL` to `XHIGH`;
+`llm.ThinkingLevelMax` names the level above.
+
+| Level | `anthropic` (`output_config.effort`) | `gemini`, Gemini 4 (`thinkingLevel`) | `openairesp` |
+|---|---|---|---|
+| `MINIMAL` | `low` | `LOW` (thinking cannot be turned off) | `minimal` |
+| `LOW`, `MEDIUM`, `HIGH` | same | same | same |
+| `XHIGH` | `xhigh` | `XHIGH`; `HIGH` on Carbon and Argon | `high` |
+| `MAX` | `max` | the model's top level | `high` |
+
+`openaichat` does not map a level: Chat Completions servers take thinking
+per model through `extra_body`.
+
+- **Fitted per model, measured.** A level the model lacks becomes the next
+  lower one it has: on Claude, Opus 4.6 has no `xhigh` and Opus 4.5 neither
+  `xhigh` nor `max`, and Haiku 4.5 and Sonnet 4.5 take no effort at all. The
+  tables are in `claudeEffort` and `fitThinking`.
+- **A level outranks a budget.** Claude's adaptive thinking and Gemini 4
+  take no number. The one exception is the Claude 4-5 generation, whose
+  thinking shape needs one: there a budget still sets it, beside the effort.
+- **From Claude 4.6 on, a level turns adaptive thinking on.** Opus 4.7 and
+  4.8 do not think unless asked. On earlier models a level sets effort where
+  the model has one, and a budget is still what turns thinking on.
+- **Levels are read case-insensitively; an unrecognised level is ignored**
+  (the budget logic stays in charge). A Claude id the rules cannot place
+  gets at most `high`, the bands every model with effort accepts.
+- **Gemini 4 takes no budget at all** (any value is a 400). Gemini 4.x and
+  later are assumed to behave the same. A budget alone
+  becomes the nearest level: up to 4,096 tokens `LOW`, up to 16,384
+  `MEDIUM`, above that `HIGH`, with zero read as `LOW` and a negative
+  (dynamic) budget as the model's default. These cut points are approximate.
+- **Other Gemini models pass through,** except `MAX`, which only core-models
+  defines and which becomes `HIGH`.
+
+`TestLiveRequestShapes` sends every level to each model and fails on any
+error.
 
 ## 8. Self-hosted: tokens always, KV statistics opt-in (L3)
 

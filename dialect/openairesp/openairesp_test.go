@@ -357,6 +357,8 @@ func TestReasoningEffort(t *testing.T) {
 		want any
 	}{
 		"level": {&genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelHigh}, map[string]any{"effort": "high"}},
+		"xhigh": {&genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelXhigh}, map[string]any{"effort": "high"}},
+		"max":   {&genai.ThinkingConfig{ThinkingLevel: llm.ThinkingLevelMax}, map[string]any{"effort": "high"}},
 		// Not mapped: "no reasoning" is "minimal" on some models, "none" on
 		// later ones and neither on others, so a guess could invalidate a
 		// valid request.

@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### Added
+
+- **`ThinkingLevel` is one thinking setting across the Claude, Gemini and
+  OpenAI Responses adapters.** `genai.ThinkingConfig.ThinkingLevel` now
+  maps, per model, to Claude's `output_config.effort`, Gemini 4's
+  `thinkingLevel` and OpenAI's `reasoning.effort`; `llm.ThinkingLevelMax`
+  names the level above `XHIGH`. Levels are read case-insensitively. A level
+  the model lacks becomes the next lower one it has (measured: Claude Opus
+  4.6 has no `xhigh`, Opus 4.5 no `xhigh` or `max`, Haiku 4.5 no effort;
+  Gemini 4 Carbon no `XHIGH`); a Claude id the rules cannot place gets at
+  most `high`. A level outranks a budget, and from Claude 4.6 on turns
+  adaptive thinking on; before that a level sets effort where the model has
+  it, and a budget is still what turns thinking on. An unrecognised level is
+  ignored. The Chat Completions adapter does not map levels (servers there
+  take thinking through `extra_body`).
+- **`TestLiveRequestShapes`** (`-tags live`) sends 13 request shapes to each
+  model: 26/26 on Claude 5.5, 104/104 on eight older Claude models, 39/39 on
+  Gemini 4 Neon, Hydrogen and Carbon.
+
 ### Changed
 
 - **genai moves to v1.79.1 and anthropic-sdk-go to v1.84.0** in both
@@ -18,6 +37,11 @@
 
 ### Fixed
 
+- **Gemini 4 thinking budgets become levels.** Gemini 4 refuses any
+  `thinkingBudget` (zero too) and `MINIMAL` (measured on Neon, Hydrogen and
+  Carbon); a budget alone now becomes the nearest level and `MINIMAL`
+  becomes `LOW`. Gemini 4.x and later are treated the same way; earlier
+  Gemini models are unchanged.
 - **Claude requests are fitted to what each generation accepts**,
   measured on Vertex AI (Fable and Mythos from Anthropic's docs; neither is
   served to the test project) and checked by the new live

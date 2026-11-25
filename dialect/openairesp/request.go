@@ -185,7 +185,7 @@ func reasoningOf(tc *genai.ThinkingConfig) *reasoningOpts {
 		return nil
 	}
 	r := &reasoningOpts{}
-	switch tc.ThinkingLevel {
+	switch genai.ThinkingLevel(strings.ToUpper(string(tc.ThinkingLevel))) {
 	case genai.ThinkingLevelMinimal:
 		r.Effort = "minimal"
 	case genai.ThinkingLevelLow:
@@ -193,6 +193,11 @@ func reasoningOf(tc *genai.ThinkingConfig) *reasoningOpts {
 	case genai.ThinkingLevelMedium:
 		r.Effort = "medium"
 	case genai.ThinkingLevelHigh:
+		r.Effort = "high"
+	case genai.ThinkingLevelXhigh, llm.ThinkingLevelMax:
+		// Above high: "high" is the top effort every reasoning model
+		// takes. Higher ones exist on some models but are not mapped
+		// without a measurement.
 		r.Effort = "high"
 	}
 	if tc.IncludeThoughts {

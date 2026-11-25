@@ -25,6 +25,8 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"google.golang.org/genai"
+
+	"github.com/go-steer/core-models/llm"
 )
 
 // buildParams turns a genai-shaped LLMRequest into the Anthropic SDK's
@@ -229,19 +231,24 @@ const minThinkingTopP = 0.95
 // positive budget, which 400s on every model from claude-opus-4-7 on;
 // this one supersedes it (docs/design.md §7.3).
 //
-// Deliberately absent: output_config.effort. genai carries a token
-// budget and effort is a band, so the two do not line up — but the
-// decisive reason is measured rather than aesthetic. The set of legal
-// bands is itself per-model (claude-opus-4-6 rejects "xhigh" and lists
-// only low/medium/high/max; claude-haiku-4-5 rejects the parameter
-// outright), so mapping a budget onto a band would turn the one-bit
-// table below into a three-axis one and would 400 on a model that
-// accepts adaptive perfectly well. A budget is honoured exactly where
-// the API can express it and read as "think" where it cannot.
+// A budget is not mapped to output_config.effort. A budget is a number
+// and effort is a band, and the set of legal bands is itself per-model
+// (claude-opus-4-6 rejects "xhigh"; claude-haiku-4-5 rejects the
+// parameter outright), so guessing a band from a budget would 400 on
+// models that accept adaptive perfectly well. A budget is honoured
+// exactly where the API can express it and read as "think" where it
+// cannot. A thinking level, which is already a band, does set effort:
+// see applyThinkingLevel, which fits it to each model's bands.
 func applyThinkingConfig(params *anthropic.MessageNewParams, tc *genai.ThinkingConfig) {
 	if tc == nil {
 		return
 	}
+	if _, known := effortIndex(tc.ThinkingLevel); known {
+		applyThinkingLevel(params, tc)
+		return
+	}
+	// An unset or unrecognised level (a typo, a future genai constant)
+	// leaves the budget logic in charge rather than turning thinking on.
 	// A zero or negative budget is a request not to think. It is the
 	// only knob genai has for that, and it outranks IncludeThoughts:
 	// there is nothing to show.
@@ -273,6 +280,118 @@ func applyThinkingConfig(params *anthropic.MessageNewParams, tc *genai.ThinkingC
 	}
 	params.Thinking = anthropic.ThinkingConfigParamUnion{
 		OfAdaptive: &anthropic.ThinkingConfigAdaptiveParam{Display: display},
+	}
+}
+
+// applyThinkingLevel maps genai's ThinkingLevel, core-models'
+// provider-neutral thinking control, onto output_config.effort, and
+// turns adaptive thinking on (claude-opus-4-7 and claude-opus-4-8 do not
+// think unless asked). A level outranks a budget on the same config:
+// effort is the band the API offers from the 4-6 generation, and
+// adaptive thinking takes no number. The 4-5 generation's thinking
+// shape needs a number, so there a budget, if given, still sets it.
+//
+// The level is fitted to the model (claudeEffort): one it does not
+// offer becomes the next lower one it does, and a model with no effort
+// setting gets none.
+func applyThinkingLevel(params *anthropic.MessageNewParams, tc *genai.ThinkingConfig) {
+	if effort, ok := claudeEffort(params.Model, tc.ThinkingLevel); ok {
+		params.OutputConfig.Effort = effort
+	}
+	if legacyThinkingModel(params.Model) {
+		if tc.ThinkingBudget != nil && *tc.ThinkingBudget > 0 {
+			params.Thinking = anthropic.ThinkingConfigParamOfEnabled(legacyBudget(params, int64(*tc.ThinkingBudget)))
+		}
+		return
+	}
+	display := anthropic.ThinkingConfigAdaptiveDisplayOmitted
+	if tc.IncludeThoughts {
+		display = anthropic.ThinkingConfigAdaptiveDisplaySummarized
+	}
+	params.Thinking = anthropic.ThinkingConfigParamUnion{
+		OfAdaptive: &anthropic.ThinkingConfigAdaptiveParam{Display: display},
+	}
+}
+
+// effortLadder is Anthropic's effort bands, lowest first.
+var effortLadder = []anthropic.OutputConfigEffort{
+	anthropic.OutputConfigEffortLow,
+	anthropic.OutputConfigEffortMedium,
+	anthropic.OutputConfigEffortHigh,
+	anthropic.OutputConfigEffortXhigh,
+	anthropic.OutputConfigEffortMax,
+}
+
+// claudeEffort maps a thinking level onto the effort band modelID
+// offers. Measured 2026-11-25 on Vertex AI `global`:
+//
+//	model                  low/medium/high   xhigh   max
+//	claude-haiku-4-5       400 "does not support the effort parameter"
+//	claude-opus-4-5        accepted          400     400
+//	claude-opus-4-6        accepted          400     accepted
+//	claude-opus-4-7        accepted          accepted accepted
+//	claude-opus-4-8, -opus-5, -sonnet-5, -haiku-5-5,
+//	claude-opus-5-5, -sonnet-5-5             accepted (all five)
+//
+// claude-opus-4-8 measured as 4-7. Anthropic documents claude-sonnet-4-5
+// as Haiku 4.5 (no effort) and claude-sonnet-4-6 as Opus 4.6, and Fable
+// and Mythos with all five. MINIMAL, which Claude has no band for, is
+// low. A band the model lacks becomes the next lower one it has. An id
+// this cannot place is offered low to high, the bands every model with
+// effort accepts.
+func claudeEffort(modelID string, level genai.ThinkingLevel) (anthropic.OutputConfigEffort, bool) {
+	want, ok := effortIndex(level)
+	if !ok {
+		return "", false
+	}
+	offered := effortOffered(modelID)
+	for i := want; i >= 0; i-- {
+		if offered[i] {
+			return effortLadder[i], true
+		}
+	}
+	return "", false
+}
+
+// effortIndex places a thinking level on effortLadder. Levels are read
+// case-insensitively, since they often come from config files ("high").
+func effortIndex(level genai.ThinkingLevel) (int, bool) {
+	switch genai.ThinkingLevel(strings.ToUpper(string(level))) {
+	case genai.ThinkingLevelMinimal, genai.ThinkingLevelLow:
+		return 0, true
+	case genai.ThinkingLevelMedium:
+		return 1, true
+	case genai.ThinkingLevelHigh:
+		return 2, true
+	case genai.ThinkingLevelXhigh:
+		return 3, true
+	case llm.ThinkingLevelMax:
+		return 4, true
+	}
+	return -1, false
+}
+
+// effortOffered is which effortLadder bands modelID accepts.
+func effortOffered(modelID string) [5]bool {
+	id := baseModelID(modelID)
+	family := claudeFamily(id)
+	major, minor, ok := claudeVersion(id)
+	switch {
+	case newFamily(id):
+		return [5]bool{true, true, true, true, true}
+	case !ok:
+		// low to high is what every model with effort accepts.
+		return [5]bool{true, true, true, false, false}
+	case major < 4 || major == 4 && minor < 5,
+		family == "haiku" && major < 5,
+		family == "sonnet" && major == 4 && minor == 5:
+		return [5]bool{}
+	case major == 4 && minor == 5:
+		return [5]bool{true, true, true, false, false}
+	case major == 4 && minor == 6:
+		return [5]bool{true, true, true, false, true}
+	default:
+		return [5]bool{true, true, true, true, true}
 	}
 }
 

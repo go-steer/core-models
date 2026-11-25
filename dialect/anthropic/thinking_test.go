@@ -21,6 +21,8 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"google.golang.org/genai"
+
+	"github.com/go-steer/core-models/llm"
 )
 
 // These tests exist because the ones they replaced could not have
@@ -500,5 +502,124 @@ func TestTemperatureAndTopPAreExclusiveOnFourFive(t *testing.T) {
 	p, _ := buildParams("claude-opus-4-6", userText("hi"), &genai.GenerateContentConfig{TopP: genai.Ptr[float32](0.9)}, CacheOptions{}, BuiltinTools{})
 	if !p.TopP.Valid() {
 		t.Error("claude-opus-4-6: top_p alone was dropped")
+	}
+}
+
+// A thinking level is core-models' provider-neutral control. On Claude it
+// becomes output_config.effort, fitted to the bands the model offers (see
+// claudeEffort: measured rows, plus documented ones for sonnet-4-5, Fable
+// and Mythos), and from the 4-6 generation turns adaptive thinking on.
+func TestThinkingLevelMapsToEffort(t *testing.T) {
+	t.Parallel()
+	all := []genai.ThinkingLevel{
+		genai.ThinkingLevelMinimal, genai.ThinkingLevelLow, genai.ThinkingLevelMedium,
+		genai.ThinkingLevelHigh, genai.ThinkingLevelXhigh, llm.ThinkingLevelMax,
+	}
+	for _, tc := range []struct {
+		model    string
+		want     []string // effort per level in all; "" means none sent
+		adaptive bool     // false: no thinking param at all
+	}{
+		{"claude-opus-5-5", []string{"low", "low", "medium", "high", "xhigh", "max"}, true},
+		{"claude-sonnet-5-5", []string{"low", "low", "medium", "high", "xhigh", "max"}, true},
+		{"claude-haiku-5-5", []string{"low", "low", "medium", "high", "xhigh", "max"}, true},
+		{"claude-opus-4-8", []string{"low", "low", "medium", "high", "xhigh", "max"}, true},
+		{"claude-opus-4-7", []string{"low", "low", "medium", "high", "xhigh", "max"}, true},
+		{"claude-opus-4-6", []string{"low", "low", "medium", "high", "high", "max"}, true},
+		{"claude-opus-4-6@20260205", []string{"low", "low", "medium", "high", "high", "max"}, true},
+		{"claude-opus-4-5", []string{"low", "low", "medium", "high", "high", "high"}, false},
+		{"claude-haiku-4-5", []string{"", "", "", "", "", ""}, false},
+		{"claude-sonnet-4-5", []string{"", "", "", "", "", ""}, false},                       // documented
+		{"claude-fable-5-2", []string{"low", "low", "medium", "high", "xhigh", "max"}, true}, // documented
+		{"claude-mythos-preview", []string{"low", "low", "medium", "high", "xhigh", "max"}, true},
+		// An id the rules cannot place gets low to high only.
+		{"claude-unknown", []string{"low", "low", "medium", "high", "high", "high"}, true},
+	} {
+		for i, level := range all {
+			p, err := buildParams(tc.model, userText("hi"), &genai.GenerateContentConfig{
+				ThinkingConfig: &genai.ThinkingConfig{ThinkingLevel: level},
+			}, CacheOptions{}, BuiltinTools{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := string(p.OutputConfig.Effort); got != tc.want[i] {
+				t.Errorf("%s at %s: effort %q, want %q", tc.model, level, got, tc.want[i])
+			}
+			if got := p.Thinking.OfAdaptive != nil; got != tc.adaptive {
+				t.Errorf("%s at %s: adaptive %v, want %v", tc.model, level, got, tc.adaptive)
+			}
+			if !tc.adaptive && (p.Thinking.OfEnabled != nil || p.Thinking.OfDisabled != nil) {
+				t.Errorf("%s at %s: thinking %+v sent; a level alone sets none here", tc.model, level, p.Thinking)
+			}
+		}
+	}
+}
+
+// Levels often come from config files, so case does not matter. An
+// unrecognised level leaves the budget logic in charge instead of turning
+// thinking on.
+func TestThinkingLevelCaseAndUnknown(t *testing.T) {
+	t.Parallel()
+	p, _ := buildParams("claude-opus-5", userText("hi"), &genai.GenerateContentConfig{
+		ThinkingConfig: &genai.ThinkingConfig{ThinkingLevel: "high"},
+	}, CacheOptions{}, BuiltinTools{})
+	if p.OutputConfig.Effort != "high" || p.Thinking.OfAdaptive == nil {
+		t.Errorf("lowercase high: effort %q, thinking %+v; want high, adaptive", p.OutputConfig.Effort, p.Thinking)
+	}
+	p, _ = buildParams("claude-opus-5", userText("hi"), &genai.GenerateContentConfig{
+		ThinkingConfig: &genai.ThinkingConfig{ThinkingLevel: "BOGUS", ThinkingBudget: genai.Ptr[int32](0)},
+	}, CacheOptions{}, BuiltinTools{})
+	if p.OutputConfig.Effort != "" || p.Thinking.OfDisabled == nil {
+		t.Errorf("unknown level with budget 0: effort %q, thinking %+v; want the budget's disabled", p.OutputConfig.Effort, p.Thinking)
+	}
+}
+
+// A level turns thinking on, so the thinking-on sampling fit applies:
+// temperature only if 1, top_p raised to 0.95, no top_k.
+func TestThinkingLevelWithSampling(t *testing.T) {
+	t.Parallel()
+	p, err := buildParams("claude-opus-4-6", userText("hi"), &genai.GenerateContentConfig{
+		Temperature: genai.Ptr[float32](0.2), TopP: genai.Ptr[float32](0.5), TopK: genai.Ptr[float32](40),
+		ThinkingConfig: &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelXhigh},
+	}, CacheOptions{}, BuiltinTools{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.OutputConfig.Effort != "high" || p.Temperature.Valid() || p.TopK.Valid() || !p.TopP.Valid() || p.TopP.Value != minThinkingTopP {
+		t.Errorf("effort %q, temperature %v, top_p %v, top_k %v; want high, top_p 0.95 only", p.OutputConfig.Effort, p.Temperature, p.TopP, p.TopK)
+	}
+}
+
+// A level outranks a budget: adaptive thinking takes no number. On the
+// 4-5 generation, whose thinking shape needs one, a budget still sets
+// it alongside the effort.
+func TestThinkingLevelOutranksBudget(t *testing.T) {
+	t.Parallel()
+	for _, budget := range []int32{0, 4096} {
+		p, err := buildParams("claude-sonnet-5-5", userText("hi"), &genai.GenerateContentConfig{
+			ThinkingConfig: &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelHigh, ThinkingBudget: genai.Ptr(budget)},
+		}, CacheOptions{}, BuiltinTools{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p.Thinking.OfAdaptive == nil || p.Thinking.OfBetweenTools != nil || p.OutputConfig.Effort != "high" {
+			t.Errorf("budget %d with level HIGH: thinking %+v, effort %q; want adaptive at high", budget, p.Thinking, p.OutputConfig.Effort)
+		}
+	}
+	p, err := buildParams("claude-opus-4-5", userText("hi"), &genai.GenerateContentConfig{
+		ThinkingConfig: &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelMedium, ThinkingBudget: genai.Ptr[int32](4096)},
+	}, CacheOptions{}, BuiltinTools{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Thinking.OfEnabled == nil || p.Thinking.OfEnabled.BudgetTokens != 4096 || p.OutputConfig.Effort != "medium" {
+		t.Errorf("claude-opus-4-5: thinking %+v, effort %q; want enabled 4096 at medium", p.Thinking, p.OutputConfig.Effort)
+	}
+	// IncludeThoughts still picks the display.
+	p, _ = buildParams("claude-opus-5-5", userText("hi"), &genai.GenerateContentConfig{
+		ThinkingConfig: &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelLow, IncludeThoughts: true},
+	}, CacheOptions{}, BuiltinTools{})
+	if p.Thinking.OfAdaptive == nil || p.Thinking.OfAdaptive.Display != anthropic.ThinkingConfigAdaptiveDisplaySummarized {
+		t.Errorf("IncludeThoughts with a level: thinking %+v, want adaptive summarized", p.Thinking)
 	}
 }

@@ -67,6 +67,32 @@ request, and takes core-agent's prompt caching:
 Claude on Vertex AI uses core-models' own Google credentials rather than
 the SDK's Vertex package, so the library takes no OAuth2 dependency.
 
+## Thinking level: one setting across providers
+
+Set `genai.ThinkingConfig.ThinkingLevel` and the Claude, Gemini and OpenAI
+Responses adapters map it onto what the model accepts, so a workload names a
+level once, whichever of those serves it. The Chat Completions adapter does
+not map it: servers there take thinking per model through `extra_body`.
+Levels are read case-insensitively; an unrecognised one is ignored.
+
+| Level | Claude (`output_config.effort`) | Gemini 4 (`thinkingLevel`) | OpenAI Responses (`reasoning.effort`) |
+|---|---|---|---|
+| `MINIMAL` | `low` | `LOW` | `minimal` |
+| `LOW`, `MEDIUM`, `HIGH` | same | same | same |
+| `XHIGH` | `xhigh` | `XHIGH` (`HIGH` on Carbon and Argon) | `high` |
+| `llm.ThinkingLevelMax` | `max` | the model's top level | `high` |
+
+- **A level the model lacks becomes the next lower one it has.** Claude
+  Opus 4.6 has no `xhigh`; Opus 4.5 has neither `xhigh` nor `max`; Haiku 4.5
+  takes no effort at all. A Claude model id the adapter cannot place gets at
+  most `high`.
+- **A level outranks a thinking budget.** From Claude 4.6 on, a level also
+  turns adaptive thinking on. On earlier Claude models a level sets effort
+  where the model has it, and a budget is still what turns thinking on.
+- **Gemini 4 refuses any thinking budget**, so a budget alone becomes the
+  nearest level, and a zero budget becomes `LOW`: Gemini 4 cannot turn
+  thinking off.
+
 ## Gemini: implicit and explicit caches
 
 Gemini discounts a repeated prompt prefix two ways. **Implicit caching**

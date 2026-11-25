@@ -57,3 +57,25 @@ func TestAPIVersionPath(t *testing.T) {
 		})
 	}
 }
+
+// TestThinkingIsFittedOnTheWire: a budget on Gemini 4 reaches the API as
+// a thinking level, with no thinkingBudget field.
+func TestThinkingIsFittedOnTheWire(t *testing.T) {
+	s := &server{steps: []func(http.ResponseWriter, *http.Request){jsonReply(http.StatusOK, answer)}}
+	c := apiClient(t, s, gemini.Options{})
+	req := &llm.Request{
+		Contents: []*genai.Content{genai.NewContentFromText("hi", genai.RoleUser)},
+		Config:   &genai.GenerateContentConfig{ThinkingConfig: &genai.ThinkingConfig{ThinkingBudget: genai.Ptr[int32](0)}},
+	}
+	if _, err := collect(t, c.Model("gemini-4-neon"), context.Background(), req, false); err != nil {
+		t.Fatal(err)
+	}
+	gc, _ := s.bodies[0]["generationConfig"].(map[string]any)
+	tc, _ := gc["thinkingConfig"].(map[string]any)
+	if tc["thinkingLevel"] != "LOW" || tc["thinkingBudget"] != nil {
+		t.Errorf("thinkingConfig on the wire = %v, want {thinkingLevel: LOW} and no budget", tc)
+	}
+	if req.Config.ThinkingConfig.ThinkingBudget == nil {
+		t.Error("the caller's config was changed")
+	}
+}

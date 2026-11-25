@@ -30,10 +30,13 @@ import (
 )
 
 // TestLiveRequestShapes sends the request shapes whose acceptance varies
-// by model (thinking off, a thinking budget, sampling knobs) through the
-// adapter to a real server, and fails on any error. It is the live half
-// of the measured tables in dialect/anthropic (rejectsSampling,
-// applyThinkingOff): a model that breaks a row shows up here.
+// by model (thinking off, a thinking budget, sampling knobs, every
+// thinking level) through the adapter to a real server, and fails on any
+// error. It is the live half of the measured tables in dialect/anthropic
+// (rejectsSampling, applyThinkingOff, claudeEffort) and dialect/gemini
+// (fitThinking): a model that breaks a row shows up here. For Gemini on
+// Vertex AI use CORE_MODELS_LIVE_PROFILE=vertex with GOOGLE_CLOUD_PROJECT
+// and GOOGLE_CLOUD_LOCATION=global.
 //
 //	CORE_MODELS_LIVE_PROFILE=anthropic-vertex \
 //	ANTHROPIC_VERTEX_PROJECT_ID=<project> CLOUD_ML_REGION=global \
@@ -75,6 +78,19 @@ func TestLiveRequestShapes(t *testing.T) {
 		{"sampling knobs, thinking off", sampling(&genai.GenerateContentConfig{ThinkingConfig: budget(0)})},
 		{"sampling knobs, thinking budget", sampling(&genai.GenerateContentConfig{ThinkingConfig: budget(2048)})},
 	}
+	for _, l := range []genai.ThinkingLevel{
+		genai.ThinkingLevelMinimal, genai.ThinkingLevelLow, genai.ThinkingLevelMedium,
+		genai.ThinkingLevelHigh, genai.ThinkingLevelXhigh, llm.ThinkingLevelMax,
+	} {
+		shapes = append(shapes, struct {
+			name string
+			cfg  *genai.GenerateContentConfig
+		}{"level " + string(l), &genai.GenerateContentConfig{ThinkingConfig: &genai.ThinkingConfig{ThinkingLevel: l}}})
+	}
+	shapes = append(shapes, struct {
+		name string
+		cfg  *genai.GenerateContentConfig
+	}{"level with budget", &genai.GenerateContentConfig{ThinkingConfig: &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelHigh, ThinkingBudget: genai.Ptr[int32](2048)}}})
 	for _, id := range strings.Split(list, ",") {
 		id = strings.TrimSpace(id)
 		m, err := prov.Model(ctx, id)
@@ -83,10 +99,11 @@ func TestLiveRequestShapes(t *testing.T) {
 		}
 		for _, sh := range shapes {
 			t.Run(id+"/"+sh.name, func(t *testing.T) {
-				sh.cfg.MaxOutputTokens = 4096
+				cfg := *sh.cfg
+				cfg.MaxOutputTokens = 4096
 				req := &llm.Request{
 					Contents: []*genai.Content{genai.NewContentFromText("Reply with the single word: ok", genai.RoleUser)},
-					Config:   sh.cfg,
+					Config:   &cfg,
 				}
 				for _, err := range m.GenerateContent(ctx, req, false) {
 					if err != nil {

@@ -168,27 +168,35 @@ single-tool requests work. It is left out for tool-using workloads.
 [core-models #12](https://github.com/go-steer/core-models/issues/12) has
 the breakdown. It is also served only from `us-east5`.
 
-### Request shapes on Claude: 2026-11-25
+### Request shapes on Claude and Gemini 4: 2026-11-25
 
-Which thinking and sampling settings a Claude model accepts changes by
-generation, and a wrong one is a 400 rather than a degraded answer.
-`TestLiveRequestShapes` (`-tags live`) sends six request shapes through
-`dialect/anthropic` to each model and fails on any error: the default,
-thinking off, a thinking budget, and sampling knobs (temperature 0.2,
-`top_p` 0.9, `top_k` 40) alone, with thinking off and with a budget.
+Which thinking and sampling settings a model accepts changes by generation,
+and a wrong one is a 400 rather than a degraded answer.
+`TestLiveRequestShapes` (`-tags live`) sends 13 request shapes through the
+adapter to each model and fails on any error: the default, thinking off, a
+thinking budget, sampling knobs (temperature 0.2, `top_p` 0.9, `top_k` 40)
+alone, with thinking off and with a budget, every thinking level from
+`MINIMAL` to `llm.ThinkingLevelMax`, and a level with a budget.
 
 | Models (Vertex AI, `global`) | Result |
 |---|---|
-| `claude-opus-5-5`, `claude-sonnet-5-5` | 12 / 12 pass. Before the 5.5 rules, 8 failed: thinking off and every sampling shape |
-| `claude-opus-5`, `claude-sonnet-5`, `claude-haiku-5-5`, `claude-opus-4-8`, `claude-opus-4-7`, `claude-opus-4-6`, `claude-opus-4-5`, `claude-haiku-4-5` | 48 / 48 pass |
+| `claude-opus-5-5`, `claude-sonnet-5-5` | 26 / 26 pass. Before the 5.5 rules, thinking off and every sampling shape failed |
+| `claude-opus-5`, `claude-sonnet-5`, `claude-haiku-5-5`, `claude-opus-4-8`, `claude-opus-4-7`, `claude-opus-4-6`, `claude-opus-4-5`, `claude-haiku-4-5` | 104 / 104 pass |
+| `gemini-4-neon`, `gemini-4-hydrogen`, `gemini-4-carbon` | 39 / 39 pass. Without the fitting, every budget shape, `MINIMAL`, and `XHIGH` on Carbon are a 400 |
 
-The per-model tables the adapter follows are in `dialect/anthropic`
-(`rejectsSampling`, `exclusiveTemperatureTopP`, `applyThinkingOff`).
+The per-model tables the adapters follow are in `dialect/anthropic`
+(`rejectsSampling`, `exclusiveTemperatureTopP`, `applyThinkingOff`,
+`claudeEffort`) and `dialect/gemini` (`fitThinking`).
 
 ```bash
 CORE_MODELS_LIVE_PROFILE=anthropic-vertex \
 ANTHROPIC_VERTEX_PROJECT_ID=<project> CLOUD_ML_REGION=global \
 CORE_MODELS_LIVE_MODELS=claude-sonnet-5-5,claude-opus-5-5 \
+  go test -tags live -run TestLiveRequestShapes -v .
+
+CORE_MODELS_LIVE_PROFILE=vertex \
+GOOGLE_CLOUD_PROJECT=<project> GOOGLE_CLOUD_LOCATION=global \
+CORE_MODELS_LIVE_MODELS=gemini-4-neon,gemini-4-hydrogen,gemini-4-carbon \
   go test -tags live -run TestLiveRequestShapes -v .
 ```
 

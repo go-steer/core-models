@@ -23,7 +23,7 @@ it.
 | Package | Exports | Imported by | Proposed | Why |
 |---|---|---|---|---|
 | `coremodels` (root) | `Open`, `Options`, `Provider` | mast, core-agent | stable | The front door: a profile to a provider |
-| `llm` | `LLM`, `Request`, `Response`, `ErrEmptyResponse` | mast, core-agent | stable | The contract. Its fields are genai types, by decision (see below) |
+| `llm` | `LLM`, `Request`, `Response`, `ErrEmptyResponse`, `ThinkingLevelMax` | mast, core-agent | stable | The contract. Its fields are genai types, by decision (see below). `ThinkingLevelMax` names the level above genai's `XHIGH` (added 2026-11-25) |
 | `usage` | `Detail`, `Attach`, `FromMetadata`, `Int64`, `MetadataKey` | mast, core-agent | stable | The normalized usage record (requirement R3) |
 | `callctx` | side-call, prompt-cache, built-ins and prior-success markers | core-agent | stable | Small and context-only. The dialects read it, and core-agent sets it |
 | `auth` | `Config`, `Credential`, `Kind`, `Options`, `TokenSource`, `QuotaProjecter`, `ErrNoADC`, `CloudPlatformScope` | mast, core-agent | stable | Credential kinds are part of the profile schema |
