@@ -58,6 +58,13 @@ var ErrEmptyResponse = fmt.Errorf(
 	"gemini: model returned no usable content with no finish reason and no error — likely a silent safety filter, streaming truncation, or transient Vertex fault; retrying often succeeds (%w)",
 	llm.ErrEmptyResponse)
 
+// ErrIncompleteStream is returned when a streamed answer carried content
+// but ended, with no error, before any response gave a finish reason: the
+// stream was cut short, by the server or a proxy in front of it, after it
+// began. IsTransient counts it, so a caller's retry policy can re-send the
+// call rather than take the partial text as the whole answer.
+var ErrIncompleteStream = errors.New("gemini: the streamed answer ended before the model finished it")
+
 // model is the llm.LLM a Client hands out: the base model plus the
 // behaviour both products layered on top of ADK's.
 type model struct {
@@ -140,9 +147,9 @@ func (m *model) GenerateContent(ctx context.Context, req *llm.Request, stream bo
 			if useCache && cc.Init != nil {
 				cc.Init(ctx, uncached.Config.SystemInstruction, uncached.Config.Tools)
 			}
-			return emptyTail(m.inner.GenerateContent(ctx, uncached, stream))
+			return emptyTail(m.inner.GenerateContent(ctx, uncached, stream), stream)
 		}
-		return emptyTail(m.cached(ctx, cc, uncached, name, stream))
+		return emptyTail(m.cached(ctx, cc, uncached, name, stream), stream)
 	})
 }
 
@@ -399,21 +406,55 @@ func hold(seq iter.Seq2[*llm.Response, error], yield func(*llm.Response, error) 
 // usable and no error, adds ErrEmptyResponse: the silent shapes of
 // mast #220 — a turn with no parts, or a bare STOP with no content —
 // that an agent loop would otherwise sit on forever.
-func emptyTail(inner iter.Seq2[*llm.Response, error]) iter.Seq2[*llm.Response, error] {
+//
+// When a stream ended with content but no error, and no response gave a
+// finish reason or an error code (a blocked prompt carries one), the answer
+// was cut short: it ends in ErrIncompleteStream instead. A unary answer
+// arrives whole or not at all, so only a stream is judged so. The last non-partial response, the aggregate an agent loop
+// records as the turn, is held until the sequence ends and dropped in that
+// case, so a retry above sees no complete answer and can re-send.
+func emptyTail(inner iter.Seq2[*llm.Response, error], stream bool) iter.Seq2[*llm.Response, error] {
 	return func(yield func(*llm.Response, error) bool) {
-		sawUsable, sawError := false, false
+		sawUsable, sawError, sawFinish := false, false, false
+		var final *llm.Response
 		for resp, err := range inner {
 			if err != nil {
 				sawError = true
 			} else if usable(resp) {
 				sawUsable = true
 			}
+			if resp != nil && (resp.FinishReason != "" || resp.ErrorCode != "") {
+				sawFinish = true
+			}
+			if err == nil && resp != nil && !resp.Partial {
+				if final != nil && !yield(final, nil) {
+					return
+				}
+				final = resp
+				continue
+			}
+			if final != nil {
+				if !yield(final, nil) {
+					return
+				}
+				final = nil
+			}
 			if !yield(resp, err) {
 				return
 			}
 		}
-		if !sawUsable && !sawError {
+		switch {
+		case !sawUsable && !sawError:
+			if final != nil && !yield(final, nil) {
+				return
+			}
 			yield(nil, ErrEmptyResponse)
+		case stream && sawUsable && !sawError && !sawFinish:
+			yield(nil, ErrIncompleteStream)
+		default:
+			if final != nil {
+				yield(final, nil)
+			}
 		}
 	}
 }

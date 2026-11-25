@@ -112,6 +112,8 @@ func TestIsTransient(t *testing.T) {
 		{"typed 429, wrapped", fmt.Errorf("gemini: %w", genai.APIError{Code: 429}), true},
 		{"typed 503", genai.APIError{Code: 503, Status: "UNAVAILABLE"}, true},
 		{"untyped 503", errors.New("Error 503, Status: UNAVAILABLE, Details: []"), true},
+		{"a stream cut short", ErrIncompleteStream, true},
+		{"a stream cut short, wrapped", fmt.Errorf("generate content: %w", ErrIncompleteStream), true},
 
 		// Permanent. Retrying these spends a request to be told the
 		// same thing.

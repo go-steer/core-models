@@ -73,7 +73,8 @@ func IsBareInvalidArgumentBody(status int, body []byte) bool {
 
 // IsTransient reports whether err is Gemini declining to serve this
 // request right now — 429 RESOURCE_EXHAUSTED or 503 UNAVAILABLE — as
-// opposed to declining it at all. The adapter does not need it: package
+// opposed to declining it at all, or a stream cut short after it began
+// (ErrIncompleteStream), which the same call is likely to complete. The adapter does not need it: package
 // retry already retries those at the HTTP layer, with Retry-After
 // visible. It is exported for a product's own model-level policy, which
 // sees what the transport gave up on (core-agent's RetryPolicy).
@@ -85,6 +86,9 @@ func IsBareInvalidArgumentBody(status int, body []byte) bool {
 func IsTransient(err error) bool {
 	if err == nil {
 		return false
+	}
+	if errors.Is(err, ErrIncompleteStream) {
+		return true
 	}
 	var apiErr genai.APIError
 	if errors.As(err, &apiErr) {

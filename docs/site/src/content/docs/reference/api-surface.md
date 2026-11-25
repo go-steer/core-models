@@ -35,7 +35,7 @@ it.
 | `dialect/openaichat` | `Client`, `New`, `Options`, `ModelOptions`, `APIError`, metadata keys | mast | stable | mast also uses it directly; most callers reach it through `Open` |
 | `dialect/openairesp` | `Client`, `New`, `Options`, `ModelOptions`, `APIError`, metadata keys | neither | stable | Reached through `Open` |
 | `dialect/anthropic` | `Client`, `New`, `Options`, `CacheOptions`, `BuiltinTools`, `APIError`, TTL and version constants | mast, core-agent | stable | Both products use cache options directly |
-| `dialect/gemini` | `Client`, `New`, `Options`, `BuiltinTools`, `ContextCache` and its hook types, `GroundingEvidence`, `IsTransient`, `IsBareInvalidArgument`, `IsBareInvalidArgumentBody`, `ErrEmptyResponse` | core-agent | stable, except `ContextCache` (experimental) | The cache hooks were introduced in v0.8.0 and serve one product's cache design |
+| `dialect/gemini` | `Client`, `New`, `Options`, `BuiltinTools`, `ContextCache` and its hook types, `GroundingEvidence`, `IsTransient`, `IsBareInvalidArgument`, `IsBareInvalidArgumentBody`, `ErrEmptyResponse`, `ErrIncompleteStream` | core-agent | stable, except `ContextCache` (experimental) | The cache hooks were introduced in v0.8.0 and serve one product's cache design |
 | `dialect/gemini/vertexcache` | `Manager`, `NewManager`, `CachesClient`, `Options`, `Status`, `Gone`, `IsBelowCacheMinimum` | core-agent | experimental | One consumer, closely tied to Vertex's caching API |
 | `adkv2` (module) | `Wrap`, `FromADK`, `Request`, `Response`, `ADKRequest`, `ADKResponse`, `GroundingProjection` | mast, core-agent | stable | The ADK v2 shim; it exposes ADK types by design |
 
@@ -72,7 +72,7 @@ Some errors carry no type:
 - Refusals of unsupported settings or parts are plain errors. A product can
   only read their text.
 - The sentinels are `llm.ErrEmptyResponse`, `gemini.ErrEmptyResponse` (which
-  wraps the first), `retry.ErrNoResponse`, `auth.ErrNoADC`,
+  wraps the first), `gemini.ErrIncompleteStream`, `retry.ErrNoResponse`, `auth.ErrNoADC`,
   `kvmetrics.ErrNoMetrics` and `kvmetrics.ErrStopped`.
 
 Both products classify some provider errors by their text:

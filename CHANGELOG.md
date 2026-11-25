@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Changed
+
+- **A Gemini stream cut short now ends in an error.** A streamed answer that
+  carried content and then ended, with no error, before any chunk gave a
+  finish reason or an error code used to complete with the partial text as
+  the whole answer. It now ends in the new `gemini.ErrIncompleteStream`,
+  and the aggregate response that would have recorded the partial text as
+  the turn isn't yielded. `gemini.IsTransient` counts it, so a model-level
+  retry policy such as core-agent's re-sends the call. Unary answers, and
+  streams that finish or end in a blocked prompt, are unchanged.
+
 ## v0.16.0 (2026-11-25)
 
 ### Added
