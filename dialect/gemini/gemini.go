@@ -45,6 +45,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"slices"
 	"sync/atomic"
 
@@ -231,6 +232,15 @@ func New(ctx context.Context, opts Options) (*Client, error) {
 	cc := &genai.ClientConfig{Backend: opts.Backend, HTTPClient: &hc}
 	if opts.BaseURL != "" {
 		cc.HTTPOptions.BaseURL = opts.BaseURL
+	}
+	// genai v1.78 moved the Developer API's default from v1beta to v1
+	// (Vertex AI stays on v1beta1). No recorded exchange covers the
+	// Developer API, so the move is not made silently by a dependency
+	// bump: stay on v1beta until v1 is verified live for every field this
+	// adapter sends. GOOGLE_GENAI_API_VERSION, which genai honors from
+	// v1.78, still chooses another version.
+	if opts.Backend == genai.BackendGeminiAPI && os.Getenv("GOOGLE_GENAI_API_VERSION") == "" {
+		cc.HTTPOptions.APIVersion = "v1beta"
 	}
 	if opts.APIKey != "" {
 		cc.APIKey = opts.APIKey

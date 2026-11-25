@@ -166,20 +166,26 @@ fetchable from the module proxy. If a new ADK major arrives while a product is
 still on the old one, add a module for it beside `adkv2` rather than moving
 ADK into the core (rule #8).
 
-### 10. Dependency floors are the consumers' floors
+### 10. Dependency floors move core-agent
 
-A library's `require` lines become minimums for everyone who imports it. In the
-core module, require the **lowest** version of genai, anthropic-sdk-go or
-openai-go that either product uses. Each adapter module requires its product's
-ADK version. That way importing core-models never upgrades an SDK underneath a
-product's own tests.
+A library's `require` lines become minimums for everyone who imports it.
+mast is no longer developed, so the consumer whose builds a floor moves is
+core-agent (and products built on it, such as go-steer/surveyor). The core
+module tracks the latest stable genai, anthropic-sdk-go and openai-go, and
+core-agent moves with it. Each adapter module requires its product's ADK
+version.
 
-Raise a floor only for a security fix, or for an API a new adapter needs.
-Record why in the docs site's
-[modules page](./docs/site/src/content/docs/reference/modules.md). Dependabot
-proposes bumps; in the core module, treat each one as raising both products'
-minimum, not as a routine patch. Before raising one, check both products'
-current versions (`grep <module> go.mod` in each).
+A raise is still a change to core-agent's dependencies, not a routine patch:
+
+- Check core-agent's current version first (`grep <module> go.mod` there).
+- Pick the version up in core-agent's bump PR, with its tests run on it.
+- Record the raise and why on the docs site's
+  [modules page](./docs/site/src/content/docs/reference/modules.md).
+- If a new SDK version changes a request an adapter sends, and no recorded
+  exchange covers it (genai v1.78 moving the Developer API to `v1`, for one),
+  hold the old behaviour in code until the new one is verified live.
+
+Dependabot proposes bumps; treat each one the same way.
 
 ### 11. Not reported is not zero
 
@@ -317,7 +323,7 @@ Pre-1.0, a minor version may break the API. Say so in the CHANGELOG under
   the type in `llm/` instead. The presubmit will catch it, but only after you've
   built on it.
 - **A count of `0` where the provider said nothing** (rule #11).
-- **Upgrading genai in the core module because Dependabot asked** (rule #10).
+- **Taking a Dependabot SDK bump without picking it up in core-agent** (rule #10).
 - **Building a provider here that a design phase hasn't reached** (rule #7).
   Check §11 first.
 - **Cross-repo links** use full GitHub URLs

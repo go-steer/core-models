@@ -30,8 +30,8 @@ public API. That is a settled decision (design D7,
 [#69](https://github.com/go-steer/core-models/issues/69)): a genai major, or a
 breaking change to one of these types or a type they are built from, is a
 core-models major, and before 1.0 a minor with an **API Change** entry. The
-dependency floors below bound the exposure: the core requires the lowest genai
-either product uses.
+dependency floors below bound the exposure: a genai raise is picked up in
+core-agent's bump PR, with its tests run on it.
 
 The types, by the package whose exported API carries them:
 
@@ -52,14 +52,21 @@ which is its purpose; the core module imports no ADK package.
 
 ## Dependency floors
 
-A library's requirements become the minimum versions its consumers get.
-The core module therefore requires the **lowest** genai version either
-product uses, so importing core-models never upgrades a product's genai
-underneath its own tests.
+A library's requirements become the minimum versions its consumers get. mast
+is no longer developed, so the consumer a floor moves is core-agent (and
+products built on it). The core module tracks the latest stable releases of
+its SDKs, and core-agent picks each raise up in its own bump PR, with its
+tests run on the new version.
 
-The same rule sets `github.com/anthropics/anthropic-sdk-go` at **v1.43.0**,
-core-agent's version; mast is on v1.78.0. The `anthropic` dialect uses
-nothing newer.
+| Module | Floor | Since | Why |
+|---|---|---|---|
+| `google.golang.org/genai` | v1.79.1 | 2026-11-25 | Latest stable. Adds `ThinkingLevelXhigh` (Gemini 4 Neon and Hydrogen accept `XHIGH`) and the `MALFORMED_RESPONSE` finish reason. Raised from v1.57.0 |
+| `github.com/anthropics/anthropic-sdk-go` | v1.84.0 | 2026-11-25 | Latest stable v1. v1.76.0 is the first with `thinking.type: between_tools`, Claude Sonnet 5.5's way to turn thinking off. Raised from v1.43.0 |
+
+genai v1.78 moved the Gemini Developer API's default version from `v1beta` to
+`v1` (Vertex AI stays on `v1beta1`). No recorded exchange covers the
+Developer API, so `dialect/gemini` stays on `v1beta` until `v1` is verified
+live; setting `GOOGLE_GENAI_API_VERSION` chooses another version.
 
 Google credentials come from `cloud.google.com/go/auth`, at the version
 genai already requires, so the core adds no module for them. Claude on
@@ -70,14 +77,15 @@ package, which would bring in `golang.org/x/oauth2` and
 For the same reason the `oauth2_client_credentials` auth kind does its
 token exchange itself (one form POST, cached on `expires_in`) rather than
 through `golang.org/x/oauth2/clientcredentials`, which would add a module,
-and so a floor, for both products.
+and so a floor, for every consumer.
 
 Exceptions are made for security fixes:
 
 | Floor | Why |
 |---|---|
 | `google.golang.org/grpc` v1.83.1 | GO-2026-6348. Both products were already at or above it |
-| `golang.org/x/net` v0.60.0 | GO-2026-6611, -6612 and -6617 (HTTP/2). This raises both products' floor, to the fixed version |
+| `golang.org/x/net` v0.60.0 | GO-2026-6611, -6612 and -6617 (HTTP/2). This raised consumers' floor to the fixed version |
+| `go.opentelemetry.io/otel/trace` v1.47.0 | GO-2026-6974 (attribute length limit bypass), reached through genai's credentials transport. Raised from v1.44.0 with `otel` and `otel/metric` |
 
 Each `go.mod` also carries `toolchain go1.26.11` for the standard library's
 fixes to the HTTP/2, `crypto/x509` and `net/http` (GO-2026-6859) issues. A

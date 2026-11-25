@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Changed
+
+- **genai moves to v1.79.1 and anthropic-sdk-go to v1.84.0** in both
+  modules, the latest stable releases. With mast no longer developed, house
+  rule #10 now has the core track the latest SDKs and core-agent pick each
+  raise up in its bump PR; the modules page lists the floors and why.
+  - genai v1.78 moved the Gemini Developer API's default from `v1beta` to
+    `v1`. `dialect/gemini` keeps the Developer API on `v1beta` (no recorded
+    exchange covers it yet); `GOOGLE_GENAI_API_VERSION`, which genai now
+    honors, chooses another version. Vertex AI is unchanged (`v1beta1`).
+  - core-models' own exported API is unchanged. genai types are part of
+    the contract (D7), so consumers now see genai v1.79.1's versions of
+    them; core-agent already requires genai v1.74.
+
+### Security
+
+- **`go.opentelemetry.io/otel/trace` moves to v1.47.0** (with `otel` and
+  `otel/metric`) for GO-2026-6974, which `govulncheck` reaches through
+  genai's credentials transport. It also failed on `main` before this change.
+
 ## v0.15.3 (2026-11-14)
 
 ### Changed
