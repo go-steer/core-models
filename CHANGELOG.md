@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.16.0 (2026-11-25)
+
 ### Added
 
 - **`ThinkingLevel` is one thinking setting across the Claude, Gemini and

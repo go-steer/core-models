@@ -5,7 +5,7 @@ go 1.26.6
 toolchain go1.26.11
 
 require (
-	github.com/go-steer/core-models v0.15.3
+	github.com/go-steer/core-models v0.16.0
 	google.golang.org/adk/v2 v2.2.0
 	google.golang.org/genai v1.79.1
 )
