@@ -16,6 +16,30 @@
     the contract (D7), so consumers now see genai v1.79.1's versions of
     them; core-agent already requires genai v1.74.
 
+### Fixed
+
+- **Claude requests are fitted to what each generation accepts**,
+  measured on Vertex AI (Fable and Mythos from Anthropic's docs; neither is
+  served to the test project) and checked by the new live
+  `TestLiveRequestShapes`. Each of these was a 400 before.
+  - A zero thinking budget sends `between_tools` on Claude Sonnet 5.5. On
+    Claude Opus 5.5, Fable and Mythos, which cannot turn thinking off, it
+    sends no thinking param and effort `low` instead of `disabled`.
+  - From the 4-7 generation, and on Fable and Mythos, any temperature other
+    than 1, any `top_p` and any `top_k` are dropped whatever the thinking
+    setting; before, they were sent whenever thinking was off. An id the
+    adapter cannot place keeps them, so a non-Claude model behind an
+    Anthropic-dialect profile is unaffected.
+  - The 4-5 and 4-6 generation refuse temperature and `top_p` together:
+    temperature is kept unless it is the default 1, in which case `top_p`
+    is. This includes the thinking-on case, where the adapter itself
+    paired temperature 1 with a raised `top_p`.
+  - A gateway or resource prefix (`anthropic/claude-sonnet-5`) no longer
+    hides the model's generation from these rules or the thinking shape.
+  - Forced tool choice is still sent as asked; on Claude Opus 5.5 and
+    Sonnet 5.5 (and, per Anthropic, Fable and Mythos 5.1 and 5.2) the
+    API's 400 reports that it is unsupported.
+
 ### Security
 
 - **`go.opentelemetry.io/otel/trace` moves to v1.47.0** (with `otel` and

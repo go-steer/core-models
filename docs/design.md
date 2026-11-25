@@ -627,9 +627,21 @@ OpenAI rides on L1 and L2 through `openai-go/azure`. Both are P1, after L5.
   list held only the 4-5 family); `budget_tokens` is kept within
   1024 ≤ budget < `max_tokens`; with thinking on, temperature other than 1
   and `top_k` are dropped and `top_p` raised to 0.95. Forced tool choice,
-  also refused with thinking, is left for the API to report. Signed
-  thinking blocks with empty text, what `display: omitted` returns, are
-  replayed.
+  also refused with thinking (and on Claude Opus 5.5 and Sonnet 5.5 for
+  every request), is left for the API to report. Signed thinking blocks
+  with empty text, what `display: omitted` returns, are replayed.
+- **The 5.5 generation, measured 2026-11-25** (tables in `convert.go`).
+  A zero budget sends `disabled` through the 5 generation,
+  `between_tools` on Sonnet 5.5, and no thinking param with effort `low`
+  on Opus 5.5, Fable and Mythos, which cannot turn thinking off. From the
+  4-7 generation (and on Fable and Mythos), temperature other than 1,
+  `top_p` and `top_k` are a 400 whatever the thinking setting and are
+  dropped; the 4-5 and 4-6 generation refuse temperature and `top_p`
+  together, so one is kept. An id the rules cannot place keeps its knobs
+  and the older thinking-off shape: the server reports what it refuses.
+  The tables were measured with anthropic-version 2023-06-01, which the
+  SDK sends; Anthropic documents 2026-10-21 as refusing every knob.
+  `TestLiveRequestShapes` checks every shape against the real API.
 - **No default model and no tiers** in the library: which Claude a product
   defaults to is product policy.
 - anthropic-sdk-go **v1.84.0** (rule 10; raised from v1.43.0 on

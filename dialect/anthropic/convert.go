@@ -92,14 +92,36 @@ func applyGenerationConfig(params *anthropic.MessageNewParams, cfg *genai.Genera
 	// written for another model (or for the same model with thinking
 	// off) is fitted rather than failed — the knobs are tuning, and the
 	// request is still the one asked for. Forced tool use is refused
-	// too, but changing a forced call to an optional one would change
-	// what was asked, so toolChoiceParam leaves that to the API to
-	// report.
+	// too (and for every request on claude-opus-5-5 and claude-sonnet-5-5,
+	// measured 2026-11-25, and on Fable and Mythos 5.1 and 5.2, documented:
+	// tool_choice any and tool are a 400),
+	// but changing a forced call to an optional one would change what was
+	// asked, so toolChoiceParam leaves that to the API to report.
 	thinking := params.Thinking.OfEnabled != nil || params.Thinking.OfAdaptive != nil
-	if cfg.Temperature != nil && (!thinking || *cfg.Temperature == 1) {
+	if rejectsSampling(params.Model) {
+		// From the 4-7 generation the knobs are gone, thinking or not:
+		// any temperature other than 1, any top_p, any top_k is a 400
+		// (measured, see rejectsSampling). Fitted for the same reason as
+		// above: dropped, and the request still goes.
+		applyStopAndToolChoice(params, cfg)
+		return
+	}
+	sendTemp := cfg.Temperature != nil && (!thinking || *cfg.Temperature == 1)
+	sendTopP := cfg.TopP != nil
+	if sendTemp && sendTopP && exclusiveTemperatureTopP(params.Model) {
+		// The 4-5 and 4-6 generation take one of the two, never both.
+		// Keep temperature, the knob a config is likelier to mean,
+		// unless it is 1, the default, which says nothing.
+		if *cfg.Temperature == 1 {
+			sendTemp = false
+		} else {
+			sendTopP = false
+		}
+	}
+	if sendTemp {
 		params.Temperature = anthropic.Float(float64(*cfg.Temperature))
 	}
-	if cfg.TopP != nil {
+	if sendTopP {
 		p := float64(*cfg.TopP)
 		if thinking && p < minThinkingTopP {
 			p = minThinkingTopP
@@ -110,12 +132,70 @@ func applyGenerationConfig(params *anthropic.MessageNewParams, cfg *genai.Genera
 		// genai models TopK as a float; Anthropic takes an integer.
 		params.TopK = anthropic.Int(int64(*cfg.TopK))
 	}
+	applyStopAndToolChoice(params, cfg)
+}
+
+// applyStopAndToolChoice maps the config fields every model accepts.
+func applyStopAndToolChoice(params *anthropic.MessageNewParams, cfg *genai.GenerateContentConfig) {
 	if len(cfg.StopSequences) > 0 {
 		params.StopSequences = cfg.StopSequences
 	}
 	if tc := toolChoiceParam(cfg.ToolConfig); tc != nil {
 		params.ToolChoice = *tc
 	}
+}
+
+// exclusiveTemperatureTopP reports whether modelID 400s temperature and
+// top_p in the same request ("cannot both be specified for this model").
+// Measured 2026-11-25 on Vertex AI `global`: claude-haiku-4-5,
+// claude-opus-4-5 and claude-opus-4-6 refuse the pair and take either
+// alone, each with top_k. Earlier generations were not available to
+// measure and keep both; from 4-7 neither is sent (rejectsSampling).
+func exclusiveTemperatureTopP(modelID string) bool {
+	major, minor, ok := claudeVersion(baseModelID(modelID))
+	return ok && major == 4 && minor >= 5
+}
+
+// rejectsSampling reports whether modelID 400s temperature (other than
+// 1), top_p and top_k whatever the thinking setting. Measured 2026-11-25
+// on Vertex AI `global`, thinking disabled and unset, one request per
+// cell:
+//
+//	model              temperature 0.5   top_p 0.9   top_k 40
+//	claude-haiku-4-5   accepted          accepted    accepted
+//	claude-opus-4-6    accepted          accepted    accepted
+//	claude-opus-4-7    400               400         400
+//	claude-opus-4-8    400               400         400
+//	claude-opus-5      400               400         400
+//	claude-sonnet-5    400               400         400
+//	claude-haiku-5-5   400               400         400
+//	claude-sonnet-5-5  400               400         -
+//	claude-opus-5-5    400               400         -
+//
+// temperature 1, the default, is accepted everywhere, so dropping it
+// changes nothing. Fable and Mythos are dropped too (Anthropic documents
+// sampling as removed on both). Any other id this cannot place, a non-
+// Claude model behind an Anthropic-dialect profile or a name like
+// claude-3-7-sonnet-latest, keeps its knobs: the server reports a 400 if
+// it refuses them, as it does for forced tool choice.
+//
+// Every row was measured with the SDK's anthropic-version 2023-06-01.
+// Anthropic documents API version 2026-10-21 as refusing all three knobs
+// on every model; an SDK that sends it changes this table.
+func rejectsSampling(modelID string) bool {
+	id := baseModelID(modelID)
+	if newFamily(id) {
+		return true
+	}
+	major, minor, ok := claudeVersion(id)
+	return ok && (major > 4 || major == 4 && minor >= 7)
+}
+
+// newFamily reports a Fable or Mythos id, including names
+// claudeVersion cannot read (claude-mythos-preview). Both families
+// postdate every rule here that keys on a version number.
+func newFamily(id string) bool {
+	return strings.HasPrefix(id, "claude-fable") || strings.HasPrefix(id, "claude-mythos")
 }
 
 // minThinkingTopP is the lowest top_p the API accepts with thinking on.
@@ -139,9 +219,11 @@ const minThinkingTopP = 0.95
 // wrong one is a hard 400 rather than a degraded turn — which is what
 // mast sent its own default model until this function existed.
 //
-// "disabled" is the one shape every model above accepts, which is why a
-// zero budget can be honoured at all. Before #369 a zero budget sent no
-// thinking param and the model thought anyway.
+// A zero budget asks for no thinking. Before #369 it sent no thinking
+// param and the model thought anyway; "disabled" fixed that for every
+// model in the table above. The 5-5 generation broke the uniformity
+// (Sonnet 5.5 takes "between_tools", Opus 5.5 cannot turn thinking off),
+// which applyThinkingOff handles.
 //
 // core-agent's older mapping sent thinking.type=enabled for any
 // positive budget, which 400s on every model from claude-opus-4-7 on;
@@ -164,9 +246,7 @@ func applyThinkingConfig(params *anthropic.MessageNewParams, tc *genai.ThinkingC
 	// only knob genai has for that, and it outranks IncludeThoughts:
 	// there is nothing to show.
 	if tc.ThinkingBudget != nil && *tc.ThinkingBudget <= 0 {
-		params.Thinking = anthropic.ThinkingConfigParamUnion{
-			OfDisabled: &anthropic.ThinkingConfigDisabledParam{},
-		}
+		applyThinkingOff(params)
 		return
 	}
 	budgeted := tc.ThinkingBudget != nil && *tc.ThinkingBudget > 0
@@ -194,6 +274,94 @@ func applyThinkingConfig(params *anthropic.MessageNewParams, tc *genai.ThinkingC
 	params.Thinking = anthropic.ThinkingConfigParamUnion{
 		OfAdaptive: &anthropic.ThinkingConfigAdaptiveParam{Display: display},
 	}
+}
+
+// applyThinkingOff expresses "don't think" in whichever shape the model
+// accepts. Measured 2026-11-25 on Vertex AI `global`:
+//
+//	model              type=disabled              type=between_tools
+//	claude-haiku-5-5   accepted                   400
+//	claude-opus-5      accepted                   400
+//	claude-sonnet-5    accepted                   400
+//	claude-sonnet-5-5  400 "send between_tools"   accepted
+//	claude-opus-5-5    400 "use adaptive+effort"  400
+//
+// Anthropic documents the Fable and Mythos models as Claude Opus 5.5
+// does: thinking cannot be turned off (not measured; neither is served
+// to this project). Where it cannot, the thinking param is left unset and
+// effort is set to low, the request read as closely as the API can
+// express it, as a budget is read as "think" on a model that takes no
+// number.
+func applyThinkingOff(params *anthropic.MessageNewParams) {
+	switch thinkingOffShape(params.Model) {
+	case thinkingOffBetweenTools:
+		params.Thinking = anthropic.ThinkingConfigParamUnion{
+			OfBetweenTools: &anthropic.ThinkingConfigBetweenToolsParam{},
+		}
+	case thinkingOffUnavailable:
+		// No thinking param, and the lowest effort: Anthropic's own
+		// advice for these models, and the closest the API comes to
+		// "don't think". Without it Opus 5.5 thinks at its default,
+		// medium.
+		params.OutputConfig.Effort = anthropic.OutputConfigEffortLow
+	default:
+		params.Thinking = anthropic.ThinkingConfigParamUnion{
+			OfDisabled: &anthropic.ThinkingConfigDisabledParam{},
+		}
+	}
+}
+
+type thinkingOff int
+
+const (
+	thinkingOffDisabled thinkingOff = iota
+	thinkingOffBetweenTools
+	thinkingOffUnavailable
+)
+
+// thinkingOffShape places a model on the table above by family and
+// generation. An id it cannot read keeps "disabled", the shape every
+// earlier model accepts.
+func thinkingOffShape(modelID string) thinkingOff {
+	id := baseModelID(modelID)
+	if newFamily(id) {
+		return thinkingOffUnavailable
+	}
+	family := claudeFamily(id)
+	major, minor, ok := claudeVersion(id)
+	if !ok {
+		return thinkingOffDisabled
+	}
+	atLeast55 := major > 5 || major == 5 && minor >= 5
+	switch {
+	case family == "opus" && atLeast55:
+		return thinkingOffUnavailable
+	case family == "sonnet" && atLeast55:
+		return thinkingOffBetweenTools
+	default:
+		return thinkingOffDisabled
+	}
+}
+
+// claudeFamily is the family word of a base Claude id in either naming
+// scheme (claude-opus-5-5, claude-3-7-sonnet), or "" if there is not
+// exactly one.
+func claudeFamily(id string) string {
+	rest, found := strings.CutPrefix(id, "claude-")
+	if !found {
+		return ""
+	}
+	family := ""
+	for _, p := range strings.Split(rest, "-") {
+		if isDigits(p) {
+			continue
+		}
+		if family != "" {
+			return ""
+		}
+		family = p
+	}
+	return family
 }
 
 // minThinkingBudget is the smallest budget_tokens the API accepts.
@@ -278,8 +446,14 @@ func claudeVersion(id string) (major, minor int, ok bool) {
 
 // baseModelID strips a snapshot suffix so a pinned model resolves to its
 // family. Anthropic writes it as "-20251101" on the first-party API and
-// as "@20251101" on Vertex; both appear in configs.
+// as "@20251101" on Vertex; both appear in configs. A path prefix is
+// dropped too.
 func baseModelID(modelID string) string {
+	// A gateway or resource prefix ("anthropic/", "publishers/anthropic/
+	// models/") names where the model is served, not which model it is.
+	if i := strings.LastIndexByte(modelID, '/'); i >= 0 {
+		modelID = modelID[i+1:]
+	}
 	if base, _, ok := strings.Cut(modelID, "@"); ok {
 		modelID = base
 	}

@@ -168,6 +168,30 @@ single-tool requests work. It is left out for tool-using workloads.
 [core-models #12](https://github.com/go-steer/core-models/issues/12) has
 the breakdown. It is also served only from `us-east5`.
 
+### Request shapes on Claude: 2026-11-25
+
+Which thinking and sampling settings a Claude model accepts changes by
+generation, and a wrong one is a 400 rather than a degraded answer.
+`TestLiveRequestShapes` (`-tags live`) sends six request shapes through
+`dialect/anthropic` to each model and fails on any error: the default,
+thinking off, a thinking budget, and sampling knobs (temperature 0.2,
+`top_p` 0.9, `top_k` 40) alone, with thinking off and with a budget.
+
+| Models (Vertex AI, `global`) | Result |
+|---|---|
+| `claude-opus-5-5`, `claude-sonnet-5-5` | 12 / 12 pass. Before the 5.5 rules, 8 failed: thinking off and every sampling shape |
+| `claude-opus-5`, `claude-sonnet-5`, `claude-haiku-5-5`, `claude-opus-4-8`, `claude-opus-4-7`, `claude-opus-4-6`, `claude-opus-4-5`, `claude-haiku-4-5` | 48 / 48 pass |
+
+The per-model tables the adapter follows are in `dialect/anthropic`
+(`rejectsSampling`, `exclusiveTemperatureTopP`, `applyThinkingOff`).
+
+```bash
+CORE_MODELS_LIVE_PROFILE=anthropic-vertex \
+ANTHROPIC_VERTEX_PROJECT_ID=<project> CLOUD_ML_REGION=global \
+CORE_MODELS_LIVE_MODELS=claude-sonnet-5-5,claude-opus-5-5 \
+  go test -tags live -run TestLiveRequestShapes -v .
+```
+
 ### Conformance corpus
 
 | Server | Model | Notable behaviour the adapter handles |

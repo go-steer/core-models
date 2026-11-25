@@ -45,6 +45,21 @@ request, and takes core-agent's prompt caching:
   `claude-opus-4-7` on reject the older budget-carrying thinking request,
   and the 4-5 generation rejects the newer adaptive one; the adapter sends
   each the one it accepts.
+- **Turning thinking off follows the model too.** A zero thinking budget
+  sends `disabled` through the 5 generation and `between_tools` on Claude
+  Sonnet 5.5. Claude Opus 5.5, Fable and Mythos cannot turn thinking off,
+  so they get no thinking param and effort `low`.
+- **Sampling knobs are fitted, not failed.** From `claude-opus-4-7` on,
+  and on Fable and Mythos, any temperature other than 1, any `top_p` and
+  any `top_k` is a 400 whatever the thinking setting, so the adapter drops
+  them. The 4-5 and 4-6 generation take temperature or `top_p`, not both;
+  temperature is kept unless it is the default 1. A model id the adapter
+  cannot place keeps every knob, and the server reports it if it refuses
+  one.
+- **Forced tool choice is sent as asked.** Claude Opus 5.5 and Sonnet 5.5
+  (and, per Anthropic, Fable and Mythos 5.1 and 5.2) refuse `tool_choice`
+  `any` and `tool`; the API's 400 says so, rather than the adapter quietly
+  making the call optional.
 - **Retries happen in the HTTP client**, as for every dialect. The SDK's
   own retries are off.
 - **Server-side tools are off** unless named in `coremodels.Options.Builtins`.

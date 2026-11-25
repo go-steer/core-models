@@ -502,22 +502,33 @@ func TestBuildParams_GenerationConfigMapped(t *testing.T) {
 	}
 
 	t.Run("sampling knobs and stop sequences pass through", func(t *testing.T) {
+		// claude-opus-4-6 is the newest model that still takes sampling
+		// knobs; from 4-7 they are dropped (TestSamplingDroppedFromFourSeven).
+		// It takes temperature or top_p, not both
+		// (TestTemperatureAndTopPAreExclusiveOnFourFive), so top_p is
+		// checked on its own below.
 		t.Parallel()
 		cfg := &genai.GenerateContentConfig{
 			Temperature:   genai.Ptr[float32](0.3),
-			TopP:          genai.Ptr[float32](0.9),
 			TopK:          genai.Ptr[float32](40),
 			StopSequences: []string{"END", "STOP"},
 		}
-		p, err := buildParams("claude-opus-4-7", contents, cfg, CacheOptions{}, BuiltinTools{})
+		p, err := buildParams("claude-opus-4-6", contents, cfg, CacheOptions{}, BuiltinTools{})
 		if err != nil {
 			t.Fatalf("buildParams: %v", err)
 		}
 		if !p.Temperature.Valid() || p.Temperature.Value != float64(float32(0.3)) {
 			t.Errorf("Temperature = %+v, want 0.3", p.Temperature)
 		}
-		if !p.TopP.Valid() || p.TopP.Value != float64(float32(0.9)) {
-			t.Errorf("TopP = %+v, want 0.9", p.TopP)
+		if p.TopP.Valid() {
+			t.Errorf("TopP = %+v, want unset", p.TopP)
+		}
+		pp, err := buildParams("claude-opus-4-6", contents, &genai.GenerateContentConfig{TopP: genai.Ptr[float32](0.9)}, CacheOptions{}, BuiltinTools{})
+		if err != nil {
+			t.Fatalf("buildParams: %v", err)
+		}
+		if !pp.TopP.Valid() || pp.TopP.Value != float64(float32(0.9)) {
+			t.Errorf("TopP alone = %+v, want 0.9", pp.TopP)
 		}
 		if !p.TopK.Valid() || p.TopK.Value != 40 {
 			t.Errorf("TopK = %+v, want 40", p.TopK)

@@ -19,6 +19,7 @@ package anthropic
 import (
 	"testing"
 
+	"github.com/anthropics/anthropic-sdk-go"
 	"google.golang.org/genai"
 )
 
@@ -307,7 +308,9 @@ func TestLegacyBudgetIsFittedToTheAPIRule(t *testing.T) {
 
 // With thinking on, the API 400s a temperature other than 1, any top_k,
 // and a top_p under 0.95. A config carrying them is fitted; with
-// thinking off or disabled, every knob passes through as set.
+// thinking off or disabled, the knobs pass through as set, except that
+// these models take temperature or top_p, not both
+// (TestTemperatureAndTopPAreExclusiveOnFourFive).
 func TestSamplingIsFittedWhenThinking(t *testing.T) {
 	t.Parallel()
 	sampling := func(tc *genai.ThinkingConfig, temp float32) *genai.GenerateContentConfig {
@@ -317,7 +320,10 @@ func TestSamplingIsFittedWhenThinking(t *testing.T) {
 		}
 	}
 	budget := &genai.ThinkingConfig{ThinkingBudget: genai.Ptr[int32](2048)}
-	for _, m := range []string{"claude-opus-4-5", "claude-opus-5"} { // enabled, adaptive
+	// claude-opus-4-5 takes the enabled shape, claude-opus-4-6 adaptive;
+	// both still take sampling knobs, which from 4-7 are dropped
+	// outright (TestSamplingDroppedFromFourSeven).
+	for _, m := range []string{"claude-opus-4-5", "claude-opus-4-6"} {
 		p, err := buildParams(m, userText("hi"), sampling(budget, 0.2), CacheOptions{}, BuiltinTools{})
 		if err != nil {
 			t.Fatal(err)
@@ -328,19 +334,171 @@ func TestSamplingIsFittedWhenThinking(t *testing.T) {
 		if !p.TopP.Valid() || p.TopP.Value != minThinkingTopP {
 			t.Errorf("%s: top_p = %v, want raised to %v", m, p.TopP, minThinkingTopP)
 		}
-		p, _ = buildParams(m, userText("hi"), sampling(budget, 1), CacheOptions{}, BuiltinTools{})
+		p, _ = buildParams(m, userText("hi"), &genai.GenerateContentConfig{Temperature: genai.Ptr[float32](1), ThinkingConfig: budget}, CacheOptions{}, BuiltinTools{})
 		if !p.Temperature.Valid() || p.Temperature.Value != 1 {
 			t.Errorf("%s: temperature 1 is allowed with thinking and was dropped", m)
 		}
 	}
 	off := &genai.ThinkingConfig{ThinkingBudget: genai.Ptr[int32](0)}
 	for name, tc := range map[string]*genai.ThinkingConfig{"no thinking config": nil, "thinking disabled": off} {
-		p, err := buildParams("claude-opus-5", userText("hi"), sampling(tc, 0.2), CacheOptions{}, BuiltinTools{})
+		p, err := buildParams("claude-opus-4-6", userText("hi"), sampling(tc, 0.2), CacheOptions{}, BuiltinTools{})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if p.Temperature.Value != float64(float32(0.2)) || p.TopK.Value != 40 || p.TopP.Value != float64(float32(0.5)) {
-			t.Errorf("%s: temperature %v, top_k %v, top_p %v; want them as set", name, p.Temperature, p.TopK, p.TopP)
+		if p.Temperature.Value != float64(float32(0.2)) || p.TopK.Value != 40 || p.TopP.Valid() {
+			t.Errorf("%s: temperature %v, top_k %v, top_p %v; want temperature and top_k as set, top_p dropped", name, p.Temperature, p.TopK, p.TopP)
 		}
+	}
+}
+
+// From the 4-7 generation, temperature (other than 1), top_p and top_k
+// are a 400 whatever the thinking setting (measured; see
+// rejectsSampling). They are dropped; stop sequences and tool choice
+// still map.
+func TestSamplingDroppedFromFourSeven(t *testing.T) {
+	t.Parallel()
+	for _, m := range []string{
+		"claude-opus-4-7", "claude-opus-4-7-20260416", "claude-opus-4-8", "claude-opus-5",
+		"claude-sonnet-5", "claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5@20261101",
+		"claude-fable-5-2", "claude-mythos-preview", "anthropic/claude-sonnet-5",
+		"claude-opus-6", // extrapolated: a later generation than any measured
+	} {
+		for name, tc := range map[string]*genai.ThinkingConfig{
+			"no thinking config": nil,
+			"thinking off":       {ThinkingBudget: genai.Ptr[int32](0)},
+			"thinking budget":    {ThinkingBudget: genai.Ptr[int32](2048)},
+		} {
+			cfg := &genai.GenerateContentConfig{
+				Temperature: genai.Ptr[float32](0.2), TopP: genai.Ptr[float32](0.9), TopK: genai.Ptr[float32](40),
+				StopSequences:  []string{"END"},
+				ToolConfig:     &genai.ToolConfig{FunctionCallingConfig: &genai.FunctionCallingConfig{Mode: genai.FunctionCallingConfigModeNone}},
+				ThinkingConfig: tc,
+			}
+			p, err := buildParams(m, userText("hi"), cfg, CacheOptions{}, BuiltinTools{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if p.Temperature.Valid() || p.TopP.Valid() || p.TopK.Valid() {
+				t.Errorf("%s, %s: temperature %v, top_p %v, top_k %v sent; the model 400s them", m, name, p.Temperature, p.TopP, p.TopK)
+			}
+			if len(p.StopSequences) != 1 || p.ToolChoice.OfNone == nil {
+				t.Errorf("%s, %s: stop sequences %v, tool choice %+v; want both mapped", m, name, p.StopSequences, p.ToolChoice)
+			}
+		}
+	}
+	// claude-opus-4-6 and earlier keep them (TestSamplingIsFittedWhenThinking),
+	// and so does any id this cannot place: a non-Claude model behind an
+	// Anthropic-dialect profile, or a name the parser cannot read. The
+	// server reports a 400 if it refuses them.
+	for _, m := range []string{"claude-opus-4-6", "deepseek-chat", "claude-3-7-sonnet-latest", "claude-unknown"} {
+		p, err := buildParams(m, userText("hi"), &genai.GenerateContentConfig{Temperature: genai.Ptr[float32](0.2)}, CacheOptions{}, BuiltinTools{})
+		if err != nil || !p.Temperature.Valid() {
+			t.Errorf("%s: temperature %v, err %v; want it sent", m, p.Temperature, err)
+		}
+	}
+}
+
+// A zero budget asks for no thinking. Each model gets the shape it
+// accepts (measured; see applyThinkingOff): "disabled" through the 5
+// generation, "between_tools" for Sonnet 5.5, and nothing at all where
+// thinking cannot be turned off.
+func TestThinkingOffShapeByModel(t *testing.T) {
+	t.Parallel()
+	off := &genai.ThinkingConfig{ThinkingBudget: genai.Ptr[int32](0)}
+	for _, tc := range []struct {
+		model string
+		want  string
+	}{
+		{"claude-haiku-4-5", "disabled"},
+		{"claude-opus-4-6", "disabled"},
+		{"claude-opus-5", "disabled"},
+		{"claude-sonnet-5", "disabled"},
+		{"claude-haiku-5-5", "disabled"},
+		{"claude-sonnet-5-5", "between_tools"},
+		{"claude-sonnet-5-5-20261101", "between_tools"},
+		{"claude-sonnet-5-5@20261101", "between_tools"},
+		{"anthropic/claude-sonnet-5-5", "between_tools"},
+		{"claude-sonnet-6", "between_tools"}, // extrapolated
+		{"claude-opus-5-5", "unset"},
+		{"claude-opus-6", "unset"}, // extrapolated
+		{"claude-fable-5", "unset"},
+		{"claude-fable-5-2", "unset"},
+		{"claude-mythos-5-2", "unset"},
+		{"claude-mythos-preview", "unset"},
+		{"claude-unknown", "disabled"},
+	} {
+		p, err := buildParams(tc.model, userText("hi"), &genai.GenerateContentConfig{ThinkingConfig: off}, CacheOptions{}, BuiltinTools{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := "unset"
+		switch {
+		case p.Thinking.OfDisabled != nil:
+			got = "disabled"
+		case p.Thinking.OfBetweenTools != nil:
+			got = "between_tools"
+		case p.Thinking.OfAdaptive != nil || p.Thinking.OfEnabled != nil:
+			got = "thinking on"
+		}
+		if got != tc.want {
+			t.Errorf("%s with a zero budget: %s, want %s", tc.model, got, tc.want)
+		}
+		// Where thinking cannot be turned off, effort goes to low instead.
+		if wantLow := tc.want == "unset"; (p.OutputConfig.Effort == anthropic.OutputConfigEffortLow) != wantLow {
+			t.Errorf("%s with a zero budget: effort %q, want low only where thinking cannot be turned off", tc.model, p.OutputConfig.Effort)
+		}
+	}
+}
+
+func TestClaudeFamily(t *testing.T) {
+	t.Parallel()
+	for id, want := range map[string]string{
+		"claude-opus-5-5":      "opus",
+		"claude-sonnet-5":      "sonnet",
+		"claude-3-7-sonnet":    "sonnet",
+		"claude-fable-5-2":     "fable",
+		"claude-5-5":           "",
+		"claude-opus-sonnet-5": "",
+		"gpt-5":                "",
+	} {
+		if got := claudeFamily(id); got != want {
+			t.Errorf("claudeFamily(%q) = %q, want %q", id, got, want)
+		}
+	}
+}
+
+// claude-haiku-4-5, claude-opus-4-5 and claude-opus-4-6 refuse
+// temperature and top_p together (measured; see
+// exclusiveTemperatureTopP). Temperature is kept unless it is the
+// default 1; top_k is unaffected.
+func TestTemperatureAndTopPAreExclusiveOnFourFive(t *testing.T) {
+	t.Parallel()
+	for _, m := range []string{"claude-haiku-4-5", "claude-opus-4-5", "claude-opus-4-6", "claude-opus-4-6@20260205"} {
+		p, err := buildParams(m, userText("hi"), &genai.GenerateContentConfig{
+			Temperature: genai.Ptr[float32](0.2), TopP: genai.Ptr[float32](0.9), TopK: genai.Ptr[float32](40),
+		}, CacheOptions{}, BuiltinTools{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !p.Temperature.Valid() || p.TopP.Valid() || !p.TopK.Valid() {
+			t.Errorf("%s: temperature %v, top_p %v, top_k %v; want temperature and top_k only", m, p.Temperature, p.TopP, p.TopK)
+		}
+		// With thinking on, temperature can only be 1 and top_p is raised
+		// to 0.95; the pair would still 400, so the meaningless 1 goes.
+		p, err = buildParams(m, userText("hi"), &genai.GenerateContentConfig{
+			Temperature: genai.Ptr[float32](1), TopP: genai.Ptr[float32](0.5),
+			ThinkingConfig: &genai.ThinkingConfig{ThinkingBudget: genai.Ptr[int32](2048)},
+		}, CacheOptions{}, BuiltinTools{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p.Temperature.Valid() || !p.TopP.Valid() {
+			t.Errorf("%s thinking: temperature %v, top_p %v; want top_p only", m, p.Temperature, p.TopP)
+		}
+	}
+	// Each alone still passes through.
+	p, _ := buildParams("claude-opus-4-6", userText("hi"), &genai.GenerateContentConfig{TopP: genai.Ptr[float32](0.9)}, CacheOptions{}, BuiltinTools{})
+	if !p.TopP.Valid() {
+		t.Error("claude-opus-4-6: top_p alone was dropped")
 	}
 }
